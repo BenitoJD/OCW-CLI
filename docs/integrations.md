@@ -22,6 +22,7 @@ Verify:
 
 ```bash
 ocw doctor
+ocw doctor --deep
 ocw models
 ```
 
@@ -31,7 +32,15 @@ Bootstrap a project:
 ocw init
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal Codex/Claude Code skills. Use `ocw init --no-skills` when you only want project files.
+This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want project files.
+
+Install project-local skills too:
+
+```bash
+ocw init --project-skills
+```
+
+This writes `.opencode/skills`, `.claude/skills`, and `.agents/skills` copies for projects that want portable agent instructions committed with the repo.
 
 Install the reusable agent skill:
 
@@ -70,11 +79,37 @@ Install for both:
 ./scripts/install-skills.sh both
 ```
 
+Install for OpenCode:
+
+```bash
+./scripts/install-skills.sh opencode
+```
+
+Install for Agent Skills-compatible clients:
+
+```bash
+./scripts/install-skills.sh agents
+```
+
+Install everywhere:
+
+```bash
+./scripts/install-skills.sh all
+```
+
+Install project-local OpenCode, Claude-compatible, and Agents-compatible skills:
+
+```bash
+./scripts/install-skills.sh project
+```
+
 The installer copies the same skill to:
 
 ```text
 ~/.codex/skills/opencode-worker/SKILL.md
 ~/.claude/skills/opencode-worker/SKILL.md
+~/.config/opencode/skills/opencode-worker/SKILL.md
+~/.agents/skills/opencode-worker/SKILL.md
 ```
 
 You can override the target directories:
@@ -82,6 +117,8 @@ You can override the target directories:
 ```bash
 OCW_CODEX_SKILLS_DIR=/path/to/codex/skills ./scripts/install-skills.sh codex
 OCW_CLAUDE_SKILLS_DIR=/path/to/claude/skills ./scripts/install-skills.sh claude
+OCW_OPENCODE_SKILLS_DIR=/path/to/opencode/skills ./scripts/install-skills.sh opencode
+OCW_AGENTS_SKILLS_DIR=/path/to/agents/skills ./scripts/install-skills.sh agents
 ```
 
 After installation, ask your agent to use the `opencode-worker` skill when it should delegate cheap worker tasks through OpenCode Go.
@@ -157,6 +194,27 @@ For a reusable Codex skill instead of per-project instructions:
 - Read `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Codex remains responsible for final edits, tests, and the user-facing answer.
 
+## OpenCode
+
+Install the OpenCode-native agent pack:
+
+```bash
+ocw agent-pack install
+```
+
+This creates markdown agents in `.opencode/agents/`:
+
+```text
+ocw-explorer.md
+ocw-reviewer.md
+ocw-patcher.md
+ocw-triage.md
+```
+
+Use them directly from OpenCode with `@ocw-explorer`, `@ocw-reviewer`, `@ocw-patcher`, or `@ocw-triage`, or configure `.ocw.toml` to route OCW modes to those agent names.
+
+The generated agents follow OpenCode's markdown agent format: YAML frontmatter declares `description`, `mode`, `model`, `temperature`, and `permission`; the body contains the agent instructions.
+
 ## Claude Code
 
 Claude Code can use `ocw` the same way: call it from the shell, inspect the saved output, and treat OpenCode worker output as draft material.
@@ -209,6 +267,8 @@ ocw review "Review the current diff for regressions"
 ocw --worktree patch "Draft the smallest safe validation fix"
 ocw apply latest --check
 ocw apply latest
+ocw bench --iterations 2
+ocw batch tasks.ocw --concurrency 3
 ```
 
 Default models:
@@ -300,4 +360,37 @@ OpenCode exposes token and cost statistics. `ocw` passes that through:
 
 ```bash
 ocw stats --days 7 --models 10
+```
+
+## Benchmarks
+
+Use `ocw bench` to compare the OpenCode Go models available in your account:
+
+```bash
+ocw bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2
+```
+
+The benchmark is intentionally small and read-only. It records status, elapsed seconds, marker detection, JSONL output, and extracted summaries in a benchmark artifact directory.
+
+## Batch Workers
+
+Create a task file:
+
+```text
+cheap|Summarize package scripts
+scan|Map the authentication flow
+review|Review the current diff
+patch|Draft the smallest safe validation fix
+```
+
+Run it:
+
+```bash
+ocw batch tasks.ocw --concurrency 3
+```
+
+For patch tasks, prefer isolated worktrees:
+
+```bash
+ocw batch tasks.ocw --concurrency 2 --worktree-patches
 ```

@@ -85,7 +85,10 @@ test_help_and_doctor() {
   local output
   "$OCW" --help >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.2.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.3.0-alpha' <<< "$output"
+  output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
+  grep -Fq 'doctor deep: ok' <<< "$output"
+  grep -Fq 'opencode-go model count: 5' <<< "$output"
 }
 
 test_default_routing() {
@@ -239,11 +242,15 @@ test_init_project() {
   local repo="$TMP_ROOT/init"
   local codex_skills="$TMP_ROOT/init-codex-skills"
   local claude_skills="$TMP_ROOT/init-claude-skills"
+  local opencode_skills="$TMP_ROOT/init-opencode-skills"
+  local agents_skills="$TMP_ROOT/init-agents-skills"
   make_repo "$repo"
   cd "$repo"
 
   OCW_CODEX_SKILLS_DIR="$codex_skills" \
     OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
     "$OCW" init >/dev/null
 
   assert_file ".gitignore"
@@ -256,6 +263,13 @@ test_init_project() {
   assert_contains ".ocw.toml" "worktree = true"
   assert_file "$codex_skills/opencode-worker/SKILL.md"
   assert_file "$claude_skills/opencode-worker/SKILL.md"
+  assert_file "$opencode_skills/opencode-worker/SKILL.md"
+  assert_file "$agents_skills/opencode-worker/SKILL.md"
+
+  "$OCW" init --project-skills >/dev/null
+  assert_file ".opencode/skills/opencode-worker/SKILL.md"
+  assert_file ".claude/skills/opencode-worker/SKILL.md"
+  assert_file ".agents/skills/opencode-worker/SKILL.md"
 }
 
 test_last_show_clean() {
@@ -339,15 +353,73 @@ test_plugin_assets() {
 test_skill_installer() {
   local codex_skills="$TMP_ROOT/codex-skills"
   local claude_skills="$TMP_ROOT/claude-skills"
+  local opencode_skills="$TMP_ROOT/opencode-skills"
+  local agents_skills="$TMP_ROOT/agents-skills"
 
   OCW_CODEX_SKILLS_DIR="$codex_skills" \
     OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
-    "$ROOT/scripts/install-skills.sh" both >/dev/null
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
+    "$ROOT/scripts/install-skills.sh" all >/dev/null
 
   assert_file "$codex_skills/opencode-worker/SKILL.md"
   assert_file "$claude_skills/opencode-worker/SKILL.md"
+  assert_file "$opencode_skills/opencode-worker/SKILL.md"
+  assert_file "$agents_skills/opencode-worker/SKILL.md"
   assert_contains "$codex_skills/opencode-worker/SKILL.md" "name: opencode-worker"
   assert_contains "$claude_skills/opencode-worker/SKILL.md" "name: opencode-worker"
+  assert_contains "$opencode_skills/opencode-worker/SKILL.md" "name: opencode-worker"
+  assert_contains "$agents_skills/opencode-worker/SKILL.md" "name: opencode-worker"
+}
+
+test_agent_pack_install() {
+  local repo="$TMP_ROOT/agent-pack"
+  make_repo "$repo"
+  cd "$repo"
+
+  "$OCW" agent-pack install >/dev/null
+
+  assert_file ".opencode/agents/ocw-explorer.md"
+  assert_file ".opencode/agents/ocw-reviewer.md"
+  assert_file ".opencode/agents/ocw-patcher.md"
+  assert_file ".opencode/agents/ocw-triage.md"
+  assert_contains ".opencode/agents/ocw-explorer.md" "model: opencode-go/deepseek-v4-flash"
+  assert_contains ".opencode/agents/ocw-patcher.md" "edit: allow"
+}
+
+test_bench_command() {
+  local repo="$TMP_ROOT/bench"
+  make_repo "$repo"
+  cd "$repo"
+
+  OCW_TEST_STAMP="bench" run_ocw bench \
+    --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash \
+    --iterations 2 >/dev/null
+
+  assert_file ".out/bench-bench/bench.md"
+  assert_file ".out/bench-bench/bench.tsv"
+  assert_contains ".out/bench-bench/bench.md" "opencode-go/qwen3.5-plus"
+  assert_contains ".out/bench-bench/bench.tsv" "opencode-go/deepseek-v4-flash"
+}
+
+test_batch_command() {
+  local repo="$TMP_ROOT/batch"
+  make_repo "$repo"
+  cd "$repo"
+
+  cat > tasks.ocw <<'EOF'
+# mode|task
+cheap|Summarize tracked.txt
+review|Review the current diff
+EOF
+
+  OCW_TEST_STAMP="batch" run_ocw batch tasks.ocw --concurrency 2 >/dev/null
+
+  assert_file ".out/batch-batch/batch.tsv"
+  assert_contains ".out/batch-batch/batch.tsv" "cheap"
+  assert_contains ".out/batch-batch/batch.tsv" "review"
+  assert_dir ".out/batch-batch-1-cheap"
+  assert_dir ".out/batch-batch-2-review"
 }
 
 run_test "help and doctor" test_help_and_doctor
@@ -366,6 +438,9 @@ run_test "stats and serve" test_stats_and_serve
 run_test "skill assets" test_skill_assets
 run_test "plugin assets" test_plugin_assets
 run_test "skill installer" test_skill_installer
+run_test "agent pack install" test_agent_pack_install
+run_test "bench command" test_bench_command
+run_test "batch command" test_batch_command
 
 say "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

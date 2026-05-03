@@ -10,6 +10,7 @@ Use this skill when a coding agent should spend less premium model time by deleg
 ## Before Delegating
 
 - Verify `ocw` exists with `ocw doctor` when setup is uncertain.
+- Use `ocw doctor --deep` when diagnosing provider reachability, model list access, output paths, or skill installation.
 - Keep each worker request bounded: one repo area, one question, one review pass, or one patch draft.
 - Treat worker output as draft labor. The primary agent remains responsible for final judgment, edits, tests, and user-facing explanation.
 
@@ -59,6 +60,29 @@ ocw --worktree patch "Draft the smallest safe fix"
 ocw apply latest --check
 ocw apply latest
 ```
+
+## Multi-Worker Helpers
+
+Use `ocw bench` when the user wants to compare available OpenCode Go models before choosing defaults:
+
+```bash
+ocw bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2
+```
+
+Use `ocw batch` when several independent worker tasks can run at once:
+
+```text
+cheap|Summarize the config flow
+scan|Map the billing flow
+review|Review the current diff
+```
+
+```bash
+ocw batch tasks.ocw --concurrency 3
+ocw batch tasks.ocw --concurrency 2 --worktree-patches
+```
+
+Read `batch.tsv` first, then inspect each listed worker output directory.
 
 ## Safety Rules
 

@@ -10,6 +10,8 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.
 - `ocw --worktree patch "<task>"` for bounded patch drafts in an isolated git worktree.
 - `ocw apply latest --check` before applying an isolated patch draft.
+- `ocw bench --iterations 2` when comparing OpenCode Go models.
+- `ocw batch tasks.ocw --concurrency 3` for several independent worker tasks.
 
 ## Rules
 
@@ -18,6 +20,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - Use `--worktree` for patch drafts in important repositories.
 - Use `ocw show latest --summary` to read the newest worker result.
 - Use `ocw apply latest --check` before applying worker diffs.
+- Use `ocw doctor --deep` when setup or model reachability is uncertain.
 - Read `.codex/opencode-workers/*/summary.md` first.
 - Inspect `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Do not trust worker output blindly.

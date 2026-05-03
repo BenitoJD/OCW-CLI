@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.0-alpha"
+VERSION="0.3.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
+DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
 
 resolve_script_dir() {
   local source="${BASH_SOURCE[0]}"
@@ -38,8 +39,11 @@ Usage:
   ocw clean (--days N|--all) [--dry-run] [--yes]
   ocw stats [opencode-stats-options...]
   ocw serve [opencode-serve-options...]
-  ocw doctor
+  ocw doctor [--deep]
   ocw models [opencode-models-options...]
+  ocw agent-pack install [--global|--dir DIR] [--force]
+  ocw bench [--models CSV] [--iterations N] [--task TASK] [--agent AGENT]
+  ocw batch TASK_FILE [--concurrency N] [--worktree-patches] [--rm-worktree]
   ocw version
 
 Worker options:
@@ -69,6 +73,10 @@ Default routing:
 Project config:
   .ocw.toml supports [models], [agents], and [defaults].
 
+Batch file format:
+  One task per line: mode|task
+  Supported batch modes: cheap, explore, scan, review, patch
+
 Output:
   .codex/opencode-workers/<timestamp>-<mode>/
     summary.md
@@ -96,6 +104,33 @@ require_command() {
 
 trim() {
   printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+csv_to_lines() {
+  local input="$1"
+  local item
+
+  while [[ "$input" == *,* ]]; do
+    item="${input%%,*}"
+    item="$(trim "$item")"
+    [[ -n "$item" ]] && printf '%s\n' "$item"
+    input="${input#*,}"
+  done
+
+  item="$(trim "$input")"
+  [[ -n "$item" ]] && printf '%s\n' "$item"
+}
+
+safe_name() {
+  printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/-/g'
+}
+
+opencode_config_home() {
+  if [[ -n "${OPENCODE_CONFIG_HOME:-}" ]]; then
+    printf '%s\n' "$OPENCODE_CONFIG_HOME"
+  else
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  fi
 }
 
 unquote() {
@@ -384,6 +419,27 @@ resolve_run_dir() {
 }
 
 doctor() {
+  local deep=0
+  local health=0
+  local output_abs root models_file model_count opencode_version
+  local codex_skills_dir claude_skills_dir opencode_home_dir opencode_skills_dir agents_skills_dir
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --deep)
+        deep=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw doctor [--deep]\n'
+        return
+        ;;
+      *)
+        die "unknown doctor option: $1"
+        ;;
+    esac
+  done
+
   printf 'ocw %s\n' "$VERSION"
 
   if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
@@ -394,8 +450,13 @@ doctor() {
 
   if have_command "$OPENCODE_BIN"; then
     printf 'opencode: %s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")"
+    opencode_version="$("$OPENCODE_BIN" --version 2>/dev/null || "$OPENCODE_BIN" version 2>/dev/null || true)"
+    if [[ -n "$opencode_version" ]]; then
+      printf 'opencode version: %s\n' "$opencode_version"
+    fi
   else
     printf 'opencode: missing\n'
+    health=1
   fi
 
   if have_command "$GIT_BIN"; then
@@ -411,10 +472,74 @@ doctor() {
   fi
 
   if have_command "$OPENCODE_BIN"; then
-    "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1 \
-      && printf 'opencode-go models: reachable\n' \
-      || printf 'opencode-go models: not reachable\n'
+    if "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1; then
+      printf 'opencode-go models: reachable\n'
+    else
+      printf 'opencode-go models: not reachable\n'
+      health=1
+    fi
   fi
+
+  if [[ "$deep" -ne 1 ]]; then
+    return 0
+  fi
+
+  output_abs="$(prepare_output_root "${out_base:-$DEFAULT_OUTPUT_ROOT}")"
+  printf 'output root: %s\n' "$output_abs"
+  [[ -w "$output_abs" ]] || health=1
+
+  if have_command "$GIT_BIN"; then
+    root="$(git_root "$PWD")"
+    if [[ -n "$root" ]]; then
+      printf 'git root: %s\n' "$root"
+      if git_is_clean "$PWD"; then
+        printf 'git state: clean\n'
+      else
+        printf 'git state: dirty\n'
+      fi
+    else
+      printf 'git root: none\n'
+    fi
+  fi
+
+  if have_command "$OPENCODE_BIN"; then
+    models_file="$(mktemp "${TMPDIR:-/tmp}/ocw-models.XXXXXX")"
+    if "$OPENCODE_BIN" models opencode-go > "$models_file" 2>/dev/null; then
+      model_count="$(grep -c . "$models_file" || true)"
+      printf 'opencode-go model count: %s\n' "$model_count"
+      while IFS= read -r model; do
+        [[ -n "$model" ]] || continue
+        printf '  - %s\n' "$model"
+      done < "$models_file"
+    else
+      printf 'opencode-go model list: failed\n'
+      health=1
+    fi
+    rm -f "$models_file"
+  fi
+
+  codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills}"
+  claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills}"
+  opencode_home_dir="$(opencode_config_home)"
+  opencode_skills_dir="${OCW_OPENCODE_SKILLS_DIR:-$opencode_home_dir/skills}"
+  agents_skills_dir="${OCW_AGENTS_SKILLS_DIR:-${AGENTS_HOME:-$HOME/.agents}/skills}"
+
+  printf 'skill Codex: %s\n' "$codex_skills_dir/$SKILL_NAME/SKILL.md"
+  [[ -f "$codex_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Codex status: not installed\n'
+  printf 'skill Claude Code: %s\n' "$claude_skills_dir/$SKILL_NAME/SKILL.md"
+  [[ -f "$claude_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Claude Code status: not installed\n'
+  printf 'skill OpenCode: %s\n' "$opencode_skills_dir/$SKILL_NAME/SKILL.md"
+  [[ -f "$opencode_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill OpenCode status: not installed\n'
+  printf 'skill Agents: %s\n' "$agents_skills_dir/$SKILL_NAME/SKILL.md"
+  [[ -f "$agents_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Agents status: not installed\n'
+
+  if [[ "$health" -eq 0 ]]; then
+    printf 'doctor deep: ok\n'
+  else
+    printf 'doctor deep: issues found\n'
+  fi
+
+  return "$health"
 }
 
 copy_if_needed() {
@@ -501,25 +626,38 @@ install_agent_skill() {
 init_project() {
   local install_codex=1
   local install_claude=1
+  local install_opencode=1
+  local install_agents=1
   local install_gitignore=1
   local install_config=1
   local install_skills=1
+  local install_project_skills=0
   local force=0
   local codex_home="${CODEX_HOME:-$HOME/.codex}"
   local claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+  local opencode_home_dir
   local codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-$codex_home/skills}"
   local claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-$claude_home/skills}"
+  opencode_home_dir="$(opencode_config_home)"
+  local opencode_skills_dir="${OCW_OPENCODE_SKILLS_DIR:-$opencode_home_dir/skills}"
+  local agents_skills_dir="${OCW_AGENTS_SKILLS_DIR:-${AGENTS_HOME:-$HOME/.agents}/skills}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --codex) install_codex=1; shift ;;
       --claude) install_claude=1; shift ;;
+      --opencode) install_opencode=1; shift ;;
+      --agents) install_agents=1; shift ;;
       --skills) install_skills=1; shift ;;
+      --project-skills) install_project_skills=1; shift ;;
       --gitignore) install_gitignore=1; shift ;;
       --config) install_config=1; shift ;;
       --no-codex) install_codex=0; shift ;;
       --no-claude) install_claude=0; shift ;;
+      --no-opencode) install_opencode=0; shift ;;
+      --no-agents) install_agents=0; shift ;;
       --no-skills) install_skills=0; shift ;;
+      --no-project-skills) install_project_skills=0; shift ;;
       --no-gitignore) install_gitignore=0; shift ;;
       --no-config) install_config=0; shift ;;
       --force) force=1; shift ;;
@@ -530,7 +668,10 @@ Usage: ocw init [options]
 Options:
   --codex / --no-codex        Install AGENTS.md project instructions
   --claude / --no-claude      Install CLAUDE.md project instructions
-  --skills / --no-skills      Install personal Codex and Claude Code skills
+  --opencode / --no-opencode  Install global OpenCode skill
+  --agents / --no-agents      Install global Agent Skills-compatible skill
+  --skills / --no-skills      Install personal/global agent skills
+  --project-skills            Install project-local .opencode/.claude/.agents skills
   --gitignore / --no-gitignore
   --config / --no-config      Install .ocw.toml
   --force                     Overwrite project instruction/config files
@@ -562,8 +703,24 @@ EOF
   fi
 
   if [[ "$install_skills" -eq 1 ]]; then
-    install_agent_skill "Codex" "$codex_skills_dir"
-    install_agent_skill "Claude Code" "$claude_skills_dir"
+    if [[ "$install_codex" -eq 1 ]]; then
+      install_agent_skill "Codex" "$codex_skills_dir"
+    fi
+    if [[ "$install_claude" -eq 1 ]]; then
+      install_agent_skill "Claude Code" "$claude_skills_dir"
+    fi
+    if [[ "$install_opencode" -eq 1 ]]; then
+      install_agent_skill "OpenCode" "$opencode_skills_dir"
+    fi
+    if [[ "$install_agents" -eq 1 ]]; then
+      install_agent_skill "Agents" "$agents_skills_dir"
+    fi
+  fi
+
+  if [[ "$install_project_skills" -eq 1 ]]; then
+    install_agent_skill "project OpenCode" ".opencode/skills"
+    install_agent_skill "project Claude Code" ".claude/skills"
+    install_agent_skill "project Agents" ".agents/skills"
   fi
 
   printf 'OCW init complete\n'
@@ -804,6 +961,511 @@ clean_command() {
   fi
 }
 
+write_ocw_agent_file() {
+  local target_dir="$1"
+  local name="$2"
+  local force="$3"
+  local target="$target_dir/$name.md"
+
+  mkdir -p "$target_dir"
+  if [[ -e "$target" && "$force" -ne 1 ]]; then
+    printf 'Kept existing OpenCode agent: %s\n' "$target"
+    return
+  fi
+
+  case "$name" in
+    ocw-explorer)
+      cat > "$target" <<'EOF'
+---
+description: Cheap read-only repository explorer for finding files, symbols, flows, and risks before a primary agent edits.
+mode: all
+model: opencode-go/deepseek-v4-flash
+temperature: 0.1
+permission:
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  bash: deny
+  webfetch: deny
+  websearch: deny
+---
+You are an OCW explorer. Do not edit files.
+
+Return compact findings with exact paths, symbols, commands inspected, and open questions. Prefer a file map over narrative.
+EOF
+      ;;
+    ocw-reviewer)
+      cat > "$target" <<'EOF'
+---
+description: Stronger read-only review pass for current diffs, risky code paths, tests, and behavior regressions.
+mode: all
+model: opencode-go/deepseek-v4-pro
+temperature: 0.1
+permission:
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  bash:
+    "*": ask
+    "git diff*": allow
+    "git status*": allow
+    "git log*": allow
+    "rg *": allow
+    "grep *": allow
+  webfetch: deny
+  websearch: deny
+---
+You are an OCW reviewer. Do not edit files.
+
+Lead with bugs, regressions, security risks, and missing tests. Cite exact files and lines when available. Keep summaries secondary.
+EOF
+      ;;
+    ocw-patcher)
+      cat > "$target" <<'EOF'
+---
+description: Bounded patch drafter for small implementation fixes, intended for isolated OCW worktrees.
+mode: all
+model: opencode-go/kimi-k2.6
+temperature: 0.1
+permission:
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: allow
+  bash:
+    "*": ask
+    "git diff*": allow
+    "git status*": allow
+    "npm test*": ask
+    "pnpm test*": ask
+    "yarn test*": ask
+    "make test*": ask
+  webfetch: deny
+  websearch: deny
+---
+You are an OCW patch drafter. Make the smallest safe change, avoid unrelated refactors, do not commit, and summarize files changed plus tests run.
+
+Use this agent from `ocw --worktree patch` whenever possible so edits stay isolated until the orchestrator reviews the diff.
+EOF
+      ;;
+    ocw-triage)
+      cat > "$target" <<'EOF'
+---
+description: Very cheap triage agent for issue summaries, bug reproduction plans, and low-risk sanity checks.
+mode: all
+model: opencode-go/qwen3.5-plus
+temperature: 0.2
+permission:
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  bash: deny
+  webfetch: deny
+  websearch: deny
+---
+You are an OCW triage agent. Do not edit files.
+
+Return a terse diagnosis, likely files, reproduction steps, and the cheapest next check.
+EOF
+      ;;
+    *)
+      die "unknown OCW agent template: $name"
+      ;;
+  esac
+
+  printf 'Installed OpenCode agent: %s\n' "$target"
+}
+
+agent_pack_command() {
+  local subcommand="${1:-install}"
+  shift || true
+  local target_dir=".opencode/agents"
+  local force=0
+  local global_dir
+
+  case "$subcommand" in
+    install)
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage: ocw agent-pack install [--global|--dir DIR] [--force]
+
+Installs OpenCode markdown agents:
+  ocw-explorer, ocw-reviewer, ocw-patcher, ocw-triage
+EOF
+      return
+      ;;
+    *)
+      die "unknown agent-pack command: $subcommand"
+      ;;
+  esac
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --global)
+        global_dir="${OCW_OPENCODE_AGENTS_DIR:-$(opencode_config_home)/agents}"
+        target_dir="$global_dir"
+        shift
+        ;;
+      --dir)
+        [[ $# -ge 2 ]] || die "--dir requires a value"
+        target_dir="$2"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw agent-pack install [--global|--dir DIR] [--force]
+EOF
+        return
+        ;;
+      *)
+        die "unknown agent-pack option: $1"
+        ;;
+    esac
+  done
+
+  write_ocw_agent_file "$target_dir" "ocw-explorer" "$force"
+  write_ocw_agent_file "$target_dir" "ocw-reviewer" "$force"
+  write_ocw_agent_file "$target_dir" "ocw-patcher" "$force"
+  write_ocw_agent_file "$target_dir" "ocw-triage" "$force"
+  printf 'OCW agent pack installed in: %s\n' "$target_dir"
+}
+
+bench_command() {
+  local root="$1"
+  shift
+  local models="$DEFAULT_BENCH_MODELS"
+  local iterations=1
+  local task="Reply with OCW_BENCH_OK and one concise sentence about the current repository."
+  local agent="plan"
+  local variant="${OCW_VARIANT:-${OCW_CONFIG_VARIANT:-}}"
+  local attach_url="${OCW_ATTACH:-${OCW_CONFIG_ATTACH:-}}"
+  local root_abs bench_dir report tsv metadata
+  local model iteration safe result_file summary_file prompt status start end elapsed marker summary
+  local created_at
+  local -a args
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --models)
+        [[ $# -ge 2 ]] || die "--models requires a comma-separated value"
+        models="$2"
+        shift 2
+        ;;
+      --iterations)
+        [[ $# -ge 2 ]] || die "--iterations requires a value"
+        iterations="$2"
+        shift 2
+        ;;
+      --task)
+        [[ $# -ge 2 ]] || die "--task requires a value"
+        task="$2"
+        shift 2
+        ;;
+      --agent)
+        [[ $# -ge 2 ]] || die "--agent requires a value"
+        agent="$2"
+        shift 2
+        ;;
+      --variant)
+        [[ $# -ge 2 ]] || die "--variant requires a value"
+        variant="$2"
+        shift 2
+        ;;
+      --attach)
+        [[ $# -ge 2 ]] || die "--attach requires a value"
+        attach_url="$2"
+        shift 2
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw bench [--models CSV] [--iterations N] [--task TASK] [--agent AGENT]
+
+Runs a small read-only benchmark against one or more OpenCode Go models and writes
+bench.md, bench.tsv, metadata.txt, and per-run JSONL summaries.
+EOF
+        return
+        ;;
+      *)
+        die "unknown bench option: $1"
+        ;;
+    esac
+  done
+
+  [[ "$iterations" =~ ^[0-9]+$ && "$iterations" -gt 0 ]] || die "--iterations must be a positive integer"
+  require_command "$OPENCODE_BIN"
+
+  root_abs="$(prepare_output_root "$root")"
+  bench_dir="$(allocate_output_dir "$root_abs" "bench")"
+  report="$bench_dir/bench.md"
+  tsv="$bench_dir/bench.tsv"
+  metadata="$bench_dir/metadata.txt"
+
+  printf '# OCW benchmark\n\n' > "$report"
+  printf '| model | iteration | status | seconds | marker | summary |\n' >> "$report"
+  printf '| --- | ---: | ---: | ---: | --- | --- |\n' >> "$report"
+  printf 'model\titeration\tstatus\tseconds\tmarker\tsummary_file\tresult_file\n' > "$tsv"
+
+  while IFS= read -r model; do
+    [[ -n "$model" ]] || continue
+    iteration=1
+    while [[ "$iteration" -le "$iterations" ]]; do
+      safe="$(safe_name "$model")"
+      result_file="$bench_dir/$safe-$iteration.jsonl"
+      summary_file="$bench_dir/$safe-$iteration.summary.md"
+      prompt="Do not edit files.
+
+OCW benchmark task:
+$task
+
+Return a compact answer. Include OCW_BENCH_OK if the task succeeds."
+      args=(run --model "$model" --agent "$agent" --dir "$PWD" --format json)
+      if [[ -n "$attach_url" ]]; then
+        args+=(--attach "$attach_url")
+      fi
+      if [[ -n "$variant" ]]; then
+        args+=(--variant "$variant")
+      fi
+
+      start="$(date +%s)"
+      set +e
+      (
+        cd "$PWD" || exit 2
+        "$OPENCODE_BIN" "${args[@]}" "$prompt"
+      ) > "$result_file"
+      status=$?
+      set -e
+      end="$(date +%s)"
+      elapsed=$((end - start))
+
+      extract_summary "$result_file" "$summary_file"
+      marker="missing"
+      grep -Fq "OCW_BENCH_OK" "$summary_file" && marker="ok"
+      summary="$(tr '\n' ' ' < "$summary_file" | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+      if [[ ${#summary} -gt 120 ]]; then
+        summary="${summary:0:117}..."
+      fi
+
+      printf "| \`%s\` | %s | %s | %s | %s | %s |\n" "$model" "$iteration" "$status" "$elapsed" "$marker" "$summary" >> "$report"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$model" "$iteration" "$status" "$elapsed" "$marker" "$summary_file" "$result_file" >> "$tsv"
+
+      iteration=$((iteration + 1))
+    done
+  done <<EOF
+$(csv_to_lines "$models")
+EOF
+
+  created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  {
+    printf 'version=%s\n' "$VERSION"
+    printf 'mode=bench\n'
+    printf 'models=%s\n' "$models"
+    printf 'iterations=%s\n' "$iterations"
+    printf 'agent=%s\n' "$agent"
+    printf 'variant=%s\n' "$variant"
+    printf 'attach_url=%s\n' "$attach_url"
+    printf 'project_dir=%s\n' "$PWD"
+    printf 'output_dir=%s\n' "$bench_dir"
+    printf 'created_at=%s\n' "$created_at"
+    printf 'config_file=%s\n' "${OCW_CONFIG_FILE:-}"
+  } > "$metadata"
+
+  cat "$report"
+  printf '\nOCW benchmark output: %s\n' "$bench_dir"
+
+  if awk -F '\t' 'NR > 1 && $3 != "0" { found = 1 } END { exit(found ? 0 : 1) }' "$tsv"; then
+    return 1
+  fi
+  return 0
+}
+
+batch_record_result() {
+  local batch_dir="$1"
+  local index="$2"
+  local mode="$3"
+  local status="$4"
+  local stdout_file="$batch_dir/$index.stdout"
+  local stderr_file="$batch_dir/$index.stderr"
+  local output_dir
+
+  output_dir="$(awk '/^OCW output: / { sub(/^OCW output: /, ""); print }' "$stdout_file" | tail -n 1)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$index" "$mode" "$status" "$output_dir" "$stdout_file" "$stderr_file" >> "$batch_dir/batch.tsv"
+}
+
+batch_wait_first() {
+  local batch_dir="$1"
+  local pid index mode status
+
+  pid="${batch_pids[0]}"
+  index="${batch_indexes[0]}"
+  mode="${batch_modes[0]}"
+
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+
+  batch_record_result "$batch_dir" "$index" "$mode" "$status"
+
+  batch_pids=("${batch_pids[@]:1}")
+  batch_indexes=("${batch_indexes[@]:1}")
+  batch_modes=("${batch_modes[@]:1}")
+}
+
+batch_command() {
+  local root="$1"
+  shift
+  local task_file=""
+  local concurrency=2
+  local worktree_patches=0
+  local remove_worktree=0
+  local require_clean=0
+  local root_abs batch_dir line mode task index worker_stamp created_at
+  local -a worker_args
+  local -a batch_pids=()
+  local -a batch_indexes=()
+  local -a batch_modes=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --concurrency)
+        [[ $# -ge 2 ]] || die "--concurrency requires a value"
+        concurrency="$2"
+        shift 2
+        ;;
+      --worktree-patches)
+        worktree_patches=1
+        shift
+        ;;
+      --rm-worktree)
+        remove_worktree=1
+        shift
+        ;;
+      --require-clean)
+        require_clean=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw batch TASK_FILE [--concurrency N] [--worktree-patches] [--rm-worktree]
+
+TASK_FILE format:
+  # comments and blank lines are ignored
+  cheap|Summarize the config flow
+  review|Review the current diff
+  patch|Draft the smallest safe fix
+EOF
+        return
+        ;;
+      -*)
+        die "unknown batch option: $1"
+        ;;
+      *)
+        if [[ -n "$task_file" ]]; then
+          die "batch accepts one task file"
+        fi
+        task_file="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ -n "$task_file" ]] || die "batch requires a task file"
+  [[ -f "$task_file" ]] || die "batch task file not found: $task_file"
+  [[ "$concurrency" =~ ^[0-9]+$ && "$concurrency" -gt 0 ]] || die "--concurrency must be a positive integer"
+
+  root_abs="$(prepare_output_root "$root")"
+  batch_dir="$(allocate_output_dir "$root_abs" "batch")"
+  printf 'index\tmode\tstatus\toutput_dir\tstdout\tstderr\n' > "$batch_dir/batch.tsv"
+
+  index=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" ]] && continue
+    [[ "$line" == \#* ]] && continue
+    [[ "$line" == *"|"* ]] || die "batch line must use mode|task: $line"
+
+    mode="$(trim "${line%%|*}")"
+    task="$(trim "${line#*|}")"
+    [[ -n "$mode" && -n "$task" ]] || die "batch line must include mode and task: $line"
+    case "$mode" in
+      cheap|explore|scan|review|patch)
+        ;;
+      *)
+        die "unknown batch mode: $mode"
+        ;;
+    esac
+
+    index=$((index + 1))
+    worker_stamp="$(basename "$batch_dir")-$index"
+    worker_args=()
+    if [[ "$require_clean" -eq 1 ]]; then
+      worker_args+=(--require-clean)
+    fi
+    if [[ "$mode" == "patch" && "$worktree_patches" -eq 1 ]]; then
+      worker_args+=(--worktree)
+    fi
+    if [[ "$mode" == "patch" && "$remove_worktree" -eq 1 ]]; then
+      worker_args+=(--rm-worktree)
+    fi
+    worker_args+=("$mode" "$task")
+
+    (
+      OCW_OUTPUT_ROOT="$root_abs" \
+        OCW_TEST_STAMP="$worker_stamp" \
+        "$OCW_SELF" "${worker_args[@]}" > "$batch_dir/$index.stdout" 2> "$batch_dir/$index.stderr"
+    ) &
+
+    batch_pids+=("$!")
+    batch_indexes+=("$index")
+    batch_modes+=("$mode")
+
+    if [[ "${#batch_pids[@]}" -ge "$concurrency" ]]; then
+      batch_wait_first "$batch_dir"
+    fi
+  done < "$task_file"
+
+  [[ "$index" -gt 0 ]] || die "batch task file has no tasks: $task_file"
+
+  while [[ "${#batch_pids[@]}" -gt 0 ]]; do
+    batch_wait_first "$batch_dir"
+  done
+
+  created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  {
+    printf 'version=%s\n' "$VERSION"
+    printf 'mode=batch\n'
+    printf 'task_file=%s\n' "$task_file"
+    printf 'concurrency=%s\n' "$concurrency"
+    printf 'worktree_patches=%s\n' "$worktree_patches"
+    printf 'remove_worktree=%s\n' "$remove_worktree"
+    printf 'require_clean=%s\n' "$require_clean"
+    printf 'project_dir=%s\n' "$PWD"
+    printf 'output_dir=%s\n' "$batch_dir"
+    printf 'created_at=%s\n' "$created_at"
+    printf 'config_file=%s\n' "${OCW_CONFIG_FILE:-}"
+  } > "$batch_dir/metadata.txt"
+
+  printf 'OCW batch output: %s\n' "$batch_dir"
+  cat "$batch_dir/batch.tsv"
+
+  if awk -F '\t' 'NR > 1 && $3 != "0" { found = 1 } END { exit(found ? 0 : 1) }' "$batch_dir/batch.tsv"; then
+    return 1
+  fi
+  return 0
+}
+
 stats_command() {
   require_command "$OPENCODE_BIN"
   "$OPENCODE_BIN" stats "$@"
@@ -816,6 +1478,7 @@ serve_command() {
 
 OPENCODE_BIN="${OCW_OPENCODE_BIN:-opencode}"
 GIT_BIN="${OCW_GIT_BIN:-git}"
+OCW_SELF="${BASH_SOURCE[0]}"
 load_config
 
 if [[ $# -eq 0 ]]; then
@@ -835,8 +1498,9 @@ case "$1" in
     exit 0
     ;;
   doctor)
-    doctor
-    exit 0
+    shift
+    doctor "$@"
+    exit $?
     ;;
   init)
     shift
@@ -872,6 +1536,21 @@ case "$1" in
     shift
     serve_command "$@"
     exit $?
+    ;;
+  agent-pack)
+    shift
+    agent_pack_command "$@"
+    exit 0
+    ;;
+  bench)
+    shift
+    bench_command "$out_base" "$@"
+    exit 0
+    ;;
+  batch)
+    shift
+    batch_command "$out_base" "$@"
+    exit 0
     ;;
   models)
     shift

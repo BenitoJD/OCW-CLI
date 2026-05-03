@@ -2,6 +2,16 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.3.0-alpha
+
+- Add `ocw doctor --deep` for provider reachability, model list, output root, git state, and skill installation diagnostics.
+- Extend skill installation to OpenCode and Agent Skills-compatible directories, with `all` and `project` installer targets.
+- Add `ocw agent-pack install` for OpenCode markdown agents: `ocw-explorer`, `ocw-reviewer`, `ocw-patcher`, and `ocw-triage`.
+- Add `ocw bench` to compare OpenCode Go models with saved JSONL, summaries, Markdown, TSV, and metadata.
+- Add `ocw batch` for concurrent worker task files with per-task stdout/stderr and artifact tracking.
+- Expand docs and skill guidance for Codex, Claude Code, OpenCode, and portable project-local skills.
+- Add deterministic tests for deep doctor, expanded installers, agent pack generation, benchmarks, and batch execution.
+
 ## 0.2.0-alpha
 
 - Add `ocw init` for project bootstrap, `.ocw.toml`, `.gitignore`, project instructions, and skill installation.

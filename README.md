@@ -38,15 +38,18 @@ Check your setup:
 
 ```bash
 ocw doctor
+ocw doctor --deep
 ```
 
 Bootstrap a project:
 
 ```bash
 ocw init
+ocw init --project-skills
+ocw agent-pack install
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, and the reusable personal skills.
+This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents.
 
 ## Usage
 
@@ -75,6 +78,39 @@ ocw --model opencode-go/minimax-m2.7 --agent build cheap "Try a second opinion"
 ocw --variant high explore "Map the API flow"
 ocw --attach http://localhost:4096 scan "Map the billing flow"
 ocw --file ./notes.md review "Review this plan"
+```
+
+Install OpenCode-native worker agents:
+
+```bash
+ocw agent-pack install
+```
+
+This creates:
+
+```text
+.opencode/agents/ocw-explorer.md
+.opencode/agents/ocw-reviewer.md
+.opencode/agents/ocw-patcher.md
+.opencode/agents/ocw-triage.md
+```
+
+Run a small model benchmark:
+
+```bash
+ocw bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2
+```
+
+Run several worker tasks from one file:
+
+```bash
+cat > tasks.ocw <<'EOF'
+cheap|Summarize the config flow
+scan|Map the billing flow
+review|Review the current diff
+EOF
+
+ocw batch tasks.ocw --concurrency 3
 ```
 
 Inspect worker artifacts:
@@ -111,6 +147,13 @@ Install the reusable agent skill for Codex and Claude Code:
 
 ```bash
 ./scripts/install-skills.sh both
+```
+
+Install it everywhere OCW supports:
+
+```bash
+./scripts/install-skills.sh all
+./scripts/install-skills.sh project
 ```
 
 Then ask Codex to use the `opencode-worker` skill, or invoke `/opencode-worker` in Claude Code.
@@ -181,6 +224,25 @@ metadata.txt
 Read `summary.md` first. Inspect `diff.after.patch` when a worker changed files.
 
 Use `ocw show latest` instead of manually searching output directories.
+
+Benchmarks write:
+
+```text
+bench.md
+bench.tsv
+metadata.txt
+<model>-<iteration>.jsonl
+<model>-<iteration>.summary.md
+```
+
+Batches write:
+
+```text
+batch.tsv
+metadata.txt
+<index>.stdout
+<index>.stderr
+```
 
 ## Safer Patch Mode
 
@@ -262,6 +324,10 @@ OCW_GIT_BIN          Override git binary
 OCW_CONFIG           Override config file path
 OCW_ATTACH           Default opencode run --attach URL
 OCW_VARIANT          Default model variant
+OCW_CODEX_SKILLS_DIR Override Codex skill install target
+OCW_CLAUDE_SKILLS_DIR Override Claude Code skill install target
+OCW_OPENCODE_SKILLS_DIR Override OpenCode skill install target
+OCW_AGENTS_SKILLS_DIR Override Agent Skills-compatible install target
 OCW_EXPLORE_MODEL    Override explore default model
 OCW_REVIEW_MODEL     Override review default model
 OCW_PATCH_MODEL      Override patch default model
@@ -277,7 +343,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, cleanup, stats/serve passthrough, plugin assets, and Codex/Claude Code skill installation.
+The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, cleanup, stats/serve passthrough, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
 
 Run the full local quality gate:
 
@@ -304,8 +370,8 @@ make release-check
 Tag releases with signed tags:
 
 ```bash
-git tag -s v0.2.0-alpha -m "v0.2.0-alpha"
-git push origin v0.2.0-alpha
+git tag -s v0.3.0-alpha -m "v0.3.0-alpha"
+git push origin v0.3.0-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.
