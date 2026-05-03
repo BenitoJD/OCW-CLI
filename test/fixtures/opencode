@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+model=""
+agent=""
+dir=""
+format=""
+variant=""
+auto_approve=0
+files=()
+prompt=""
+log="${OCW_MOCK_LOG:-.ocw-mock.log}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    run)
+      shift
+      ;;
+    models)
+      printf 'opencode-go/deepseek-v4-flash\n'
+      printf 'opencode-go/deepseek-v4-pro\n'
+      printf 'opencode-go/kimi-k2.6\n'
+      printf 'opencode-go/mimo-v2.5\n'
+      printf 'opencode-go/qwen3.5-plus\n'
+      exit 0
+      ;;
+    --model)
+      model="$2"
+      shift 2
+      ;;
+    --agent)
+      agent="$2"
+      shift 2
+      ;;
+    --dir)
+      dir="$2"
+      shift 2
+      ;;
+    --format)
+      format="$2"
+      shift 2
+      ;;
+    --variant)
+      variant="$2"
+      shift 2
+      ;;
+    --file)
+      files+=("$2")
+      shift 2
+      ;;
+    --dangerously-skip-permissions)
+      auto_approve=1
+      shift
+      ;;
+    *)
+      prompt="$1"
+      shift
+      ;;
+  esac
+done
+
+{
+  printf 'model=%s\n' "$model"
+  printf 'agent=%s\n' "$agent"
+  printf 'dir=%s\n' "$dir"
+  printf 'format=%s\n' "$format"
+  printf 'variant=%s\n' "$variant"
+  printf 'auto_approve=%s\n' "$auto_approve"
+  printf 'files=%s\n' "${files[*]:-}"
+  printf 'prompt=%s\n' "$prompt"
+} >> "$log"
+
+if [[ "$prompt" == *"OCW_MOCK_EDIT"* ]]; then
+  printf 'mock edit from %s\n' "$model" >> tracked.txt
+fi
+
+if [[ "$prompt" == *"OCW_MOCK_FAIL"* ]]; then
+  printf '{"type":"text","part":{"text":"MOCK_FAIL %s"}}\n' "$model"
+  exit 7
+fi
+
+printf '{"type":"step_start","part":{"type":"step-start"}}\n'
+printf '{"type":"text","part":{"text":"MOCK_OK model=%s agent=%s variant=%s format=%s auto=%s files=%s"}}\n' "$model" "$agent" "$variant" "$format" "$auto_approve" "${files[*]:-none}"
+printf '{"type":"step_finish","part":{"type":"step-finish"}}\n'

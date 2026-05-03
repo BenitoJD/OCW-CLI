@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0-alpha"
+DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
+
+usage() {
+  cat <<'EOF'
+ocw - OpenCode Go workers for Codex-style orchestration
+
+Usage:
+  ocw [options] <explore|review|patch|scan|cheap> <task...>
+  ocw doctor
+  ocw models [opencode-models-options...]
+  ocw version
+
+Options:
+  -m, --model MODEL       Override the default OpenCode Go model
+  -a, --agent AGENT       Override the OpenCode agent
+  -o, --out DIR           Override output directory root
+      --variant VARIANT   Pass a model variant such as low, medium, high, or max
+      --file PATH         Attach a file to the OpenCode prompt; repeatable
+      --auto-approve      Pass OpenCode's dangerous permission skip flag
+      --require-clean     Fail unless the current git worktree is clean
+      --worktree          Run patch mode in an isolated git worktree
+      --rm-worktree       Remove the isolated worktree after capturing diffs
+  -h, --help              Show this help
+
+Default routing:
+  explore -> opencode-go/deepseek-v4-flash, agent plan
+  review  -> opencode-go/deepseek-v4-pro, agent plan
+  patch   -> opencode-go/kimi-k2.6, agent build
+  scan    -> opencode-go/mimo-v2.5, agent plan
+  cheap   -> opencode-go/qwen3.5-plus, agent plan
+
+Output:
+  .codex/opencode-workers/<timestamp>-<mode>/
+    summary.md
+    result.jsonl
+    diff.before.patch
+    diff.after.patch
+    diff.after.stat
+    status.after.txt
+    metadata.txt
+EOF
+}
+
+die() {
+  printf 'ocw: %s\n' "$*" >&2
+  exit 2
+}
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+require_command() {
+  have_command "$1" || die "required command not found: $1"
+}
+
+git_is_repo() {
+  "$GIT_BIN" -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+git_is_clean() {
+  [[ -z "$("$GIT_BIN" -C "$1" status --porcelain --untracked-files=normal)" ]]
+}
+
+prepare_output_root() {
+  local root="$1"
+  mkdir -p "$root"
+  (cd "$root" && pwd -P)
+}
+
+allocate_output_dir() {
+  local root="$1"
+  local mode="$2"
+  local stamp="${OCW_TEST_STAMP:-$(date +%Y%m%d-%H%M%S)}"
+  local base="$root/$stamp-$mode"
+  local dir="$base"
+  local counter=0
+
+  while ! mkdir "$dir" 2>/dev/null; do
+    counter=$((counter + 1))
+    dir="$base-$counter"
+  done
+
+  printf '%s\n' "$dir"
+}
+
+write_diff_snapshot() {
+  local dir="$1"
+  local output="$2"
+
+  if git_is_repo "$dir"; then
+    "$GIT_BIN" -C "$dir" diff --binary > "$output" || true
+  else
+    : > "$output"
+  fi
+}
+
+write_diff_stat() {
+  local dir="$1"
+  local output="$2"
+
+  if git_is_repo "$dir"; then
+    "$GIT_BIN" -C "$dir" diff --stat > "$output" || true
+  else
+    : > "$output"
+  fi
+}
+
+write_status_snapshot() {
+  local dir="$1"
+  local output="$2"
+
+  if git_is_repo "$dir"; then
+    "$GIT_BIN" -C "$dir" status --short > "$output" || true
+  else
+    : > "$output"
+  fi
+}
+
+extract_summary() {
+  local result_jsonl="$1"
+  local summary="$2"
+
+  if have_command jq; then
+    jq -r '
+      if type == "object" then
+        .part.text? // .message? // .text? // .content? // .delta? // empty
+      else
+        empty
+      end
+    ' "$result_jsonl" > "$summary" 2>/dev/null || cp "$result_jsonl" "$summary"
+  else
+    cp "$result_jsonl" "$summary"
+  fi
+}
+
+doctor() {
+  printf 'ocw %s\n' "$VERSION"
+
+  if have_command "$OPENCODE_BIN"; then
+    printf 'opencode: %s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")"
+  else
+    printf 'opencode: missing\n'
+  fi
+
+  if have_command "$GIT_BIN"; then
+    printf 'git: %s\n' "$(command -v "$GIT_BIN" 2>/dev/null || printf '%s' "$GIT_BIN")"
+  else
+    printf 'git: missing\n'
+  fi
+
+  if have_command jq; then
+    printf 'jq: %s\n' "$(command -v jq)"
+  else
+    printf 'jq: missing; summaries will fall back to raw JSONL\n'
+  fi
+
+  if have_command "$OPENCODE_BIN"; then
+    "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1 \
+      && printf 'opencode-go models: reachable\n' \
+      || printf 'opencode-go models: not reachable\n'
+  fi
+}
+
+OPENCODE_BIN="${OCW_OPENCODE_BIN:-opencode}"
+GIT_BIN="${OCW_GIT_BIN:-git}"
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
+
+case "$1" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  version|--version)
+    printf 'ocw %s\n' "$VERSION"
+    exit 0
+    ;;
+  doctor)
+    doctor
+    exit 0
+    ;;
+  models)
+    shift
+    require_command "$OPENCODE_BIN"
+    "$OPENCODE_BIN" models opencode-go "$@"
+    exit $?
+    ;;
+esac
+
+mode=""
+model=""
+agent=""
+variant=""
+out_base="${OCW_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}"
+auto_approve=0
+require_clean=0
+use_worktree=0
+remove_worktree=0
+files=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -m|--model)
+      [[ $# -ge 2 ]] || die "--model requires a value"
+      model="$2"
+      shift 2
+      ;;
+    -a|--agent)
+      [[ $# -ge 2 ]] || die "--agent requires a value"
+      agent="$2"
+      shift 2
+      ;;
+    -o|--out)
+      [[ $# -ge 2 ]] || die "--out requires a value"
+      out_base="$2"
+      shift 2
+      ;;
+    --variant)
+      [[ $# -ge 2 ]] || die "--variant requires a value"
+      variant="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || die "--file requires a value"
+      files+=("$2")
+      shift 2
+      ;;
+    --auto-approve)
+      auto_approve=1
+      shift
+      ;;
+    --require-clean)
+      require_clean=1
+      shift
+      ;;
+    --worktree)
+      use_worktree=1
+      shift
+      ;;
+    --rm-worktree)
+      remove_worktree=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      mode="$1"
+      shift
+      break
+      ;;
+  esac
+done
+
+[[ -n "$mode" ]] || die "missing mode"
+[[ $# -gt 0 ]] || die "missing task"
+
+task="$*"
+
+case "$mode" in
+  explore)
+    model="${model:-${OCW_EXPLORE_MODEL:-opencode-go/deepseek-v4-flash}}"
+    agent="${agent:-${OCW_EXPLORE_AGENT:-plan}}"
+    guardrail="Do not edit files. Explore the repository and return compact findings with exact file paths and symbols."
+    ;;
+  review)
+    model="${model:-${OCW_REVIEW_MODEL:-opencode-go/deepseek-v4-pro}}"
+    agent="${agent:-${OCW_REVIEW_AGENT:-plan}}"
+    guardrail="Do not edit files. Review for bugs, behavior regressions, security issues, missing tests, and risky assumptions."
+    ;;
+  patch)
+    model="${model:-${OCW_PATCH_MODEL:-opencode-go/kimi-k2.6}}"
+    agent="${agent:-${OCW_PATCH_AGENT:-build}}"
+    guardrail="Make the smallest safe code change. Do not commit. Avoid unrelated refactors. Summarize files changed and tests run."
+    ;;
+  scan)
+    model="${model:-${OCW_SCAN_MODEL:-opencode-go/mimo-v2.5}}"
+    agent="${agent:-${OCW_SCAN_AGENT:-plan}}"
+    guardrail="Do not edit files. Scan broad repository context and return a compact map of relevant files, flows, and risks."
+    ;;
+  cheap)
+    model="${model:-${OCW_CHEAP_MODEL:-opencode-go/qwen3.5-plus}}"
+    agent="${agent:-${OCW_CHEAP_AGENT:-plan}}"
+    guardrail="Do not edit files. Do cheap routine analysis and return a terse, structured answer with exact paths when relevant."
+    ;;
+  *)
+    die "unknown mode: $mode"
+    ;;
+esac
+
+require_command "$OPENCODE_BIN"
+require_command "$GIT_BIN"
+
+project_dir="$PWD"
+
+if [[ "$require_clean" -eq 1 ]]; then
+  git_is_repo "$project_dir" || die "--require-clean requires a git repository"
+  git_is_clean "$project_dir" || die "git worktree is not clean"
+fi
+
+if [[ "$use_worktree" -eq 1 && "$mode" != "patch" ]]; then
+  die "--worktree is currently supported only for patch mode"
+fi
+
+out_base_abs="$(prepare_output_root "$out_base")"
+out_dir="$(allocate_output_dir "$out_base_abs" "$mode")"
+
+run_dir="$project_dir"
+worktree_path=""
+
+if [[ "$use_worktree" -eq 1 ]]; then
+  git_is_repo "$project_dir" || die "--worktree requires a git repository"
+  worktree_root="$project_dir/.codex/opencode-worktrees"
+  mkdir -p "$worktree_root"
+  worktree_path="$worktree_root/$(basename "$out_dir")"
+  "$GIT_BIN" -C "$project_dir" worktree add --detach "$worktree_path" HEAD >/dev/null
+  run_dir="$worktree_path"
+fi
+
+write_diff_snapshot "$run_dir" "$out_dir/diff.before.patch"
+
+prompt="$guardrail
+
+OCW context:
+- Project directory: $project_dir
+- Run directory: $run_dir
+- Output directory: $out_dir
+- Ignore generated worker artifacts such as .codex/, .git/, dependency folders, build outputs, coverage folders, and temporary logs unless the task explicitly targets them.
+
+Task:
+$task
+
+Return this exact structure:
+1. Summary
+2. Files inspected
+3. Files changed
+4. Tests run
+5. Risks / follow-up
+
+Keep the answer compact. Prefer precise paths and commands over narrative."
+
+args=(
+  run
+  --model "$model"
+  --agent "$agent"
+  --dir "$run_dir"
+  --format json
+)
+
+if [[ -n "$variant" ]]; then
+  args+=(--variant "$variant")
+fi
+
+if [[ ${#files[@]} -gt 0 ]]; then
+  for file in "${files[@]}"; do
+    args+=(--file "$file")
+  done
+fi
+
+if [[ "$auto_approve" -eq 1 ]]; then
+  args+=(--dangerously-skip-permissions)
+fi
+
+set +e
+(
+  cd "$run_dir" || exit 2
+  "$OPENCODE_BIN" "${args[@]}" "$prompt"
+) | tee "$out_dir/result.jsonl"
+status=${PIPESTATUS[0]}
+set -e
+
+write_diff_snapshot "$run_dir" "$out_dir/diff.after.patch"
+write_diff_stat "$run_dir" "$out_dir/diff.after.stat"
+write_status_snapshot "$run_dir" "$out_dir/status.after.txt"
+
+created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
+{
+  printf 'version=%s\n' "$VERSION"
+  printf 'mode=%s\n' "$mode"
+  printf 'model=%s\n' "$model"
+  printf 'agent=%s\n' "$agent"
+  printf 'variant=%s\n' "$variant"
+  printf 'status=%s\n' "$status"
+  printf 'project_dir=%s\n' "$project_dir"
+  printf 'run_dir=%s\n' "$run_dir"
+  printf 'output_dir=%s\n' "$out_dir"
+  printf 'created_at=%s\n' "$created_at"
+  printf 'auto_approve=%s\n' "$auto_approve"
+  printf 'require_clean=%s\n' "$require_clean"
+  printf 'worktree=%s\n' "$use_worktree"
+  printf 'worktree_path=%s\n' "$worktree_path"
+  printf 'remove_worktree=%s\n' "$remove_worktree"
+} > "$out_dir/metadata.txt"
+
+extract_summary "$out_dir/result.jsonl" "$out_dir/summary.md"
+
+if [[ "$use_worktree" -eq 1 && "$remove_worktree" -eq 1 && -n "$worktree_path" ]]; then
+  "$GIT_BIN" -C "$project_dir" worktree remove --force "$worktree_path" >/dev/null 2>&1 || true
+fi
+
+printf '\nOCW output: %s\n' "$out_dir"
+exit "$status"

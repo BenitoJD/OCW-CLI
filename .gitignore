@@ -1,0 +1,6 @@
+.DS_Store
+dist/
+.out/
+.codex/opencode-workers/
+.codex/opencode-worktrees/
+.ocw-test/

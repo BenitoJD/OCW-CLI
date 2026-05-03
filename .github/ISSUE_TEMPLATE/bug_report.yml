@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible ocw problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include the exact ocw command and a minimal repo shape if possible.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Paste `ocw doctor`, `metadata.txt`, and a redacted summary if useful.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: ocw version
+      placeholder: ocw 0.1.0-alpha
+    validations:
+      required: true

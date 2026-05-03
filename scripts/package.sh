@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+VERSION="$("$ROOT/bin/ocw" version | awk '{print $2}')"
+DIST="$ROOT/dist"
+PKG="ocw-$VERSION"
+PKG_DIR="$DIST/$PKG"
+
+rm -rf "$DIST"
+mkdir -p "$PKG_DIR"
+
+mkdir -p "$PKG_DIR/bin" "$PKG_DIR/test/fixtures" "$PKG_DIR/scripts"
+
+cp "$ROOT/bin/ocw" "$PKG_DIR/bin/ocw"
+cp "$ROOT/install.sh" "$PKG_DIR/install.sh"
+cp "$ROOT/README.md" "$PKG_DIR/README.md"
+cp "$ROOT/LICENSE" "$PKG_DIR/LICENSE"
+cp "$ROOT/CHANGELOG.md" "$PKG_DIR/CHANGELOG.md"
+cp "$ROOT/CODE_OF_CONDUCT.md" "$PKG_DIR/CODE_OF_CONDUCT.md"
+cp "$ROOT/CONTRIBUTING.md" "$PKG_DIR/CONTRIBUTING.md"
+cp "$ROOT/SECURITY.md" "$PKG_DIR/SECURITY.md"
+cp "$ROOT/Makefile" "$PKG_DIR/Makefile"
+cp "$ROOT/test/run.sh" "$PKG_DIR/test/run.sh"
+cp "$ROOT/test/fixtures/opencode" "$PKG_DIR/test/fixtures/opencode"
+cp "$ROOT/scripts/lint.sh" "$PKG_DIR/scripts/lint.sh"
+cp "$ROOT/scripts/package.sh" "$PKG_DIR/scripts/package.sh"
+cp "$ROOT/scripts/release-check.sh" "$PKG_DIR/scripts/release-check.sh"
+
+chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/scripts/"*.sh
+
+tar -czf "$DIST/$PKG.tar.gz" -C "$DIST" "$PKG"
+
+(
+  cd "$DIST"
+  shasum -a 256 "$PKG.tar.gz" > "$PKG.tar.gz.sha256"
+)
+
+printf 'Created %s\n' "$DIST/$PKG.tar.gz"
+printf 'Created %s\n' "$DIST/$PKG.tar.gz.sha256"
