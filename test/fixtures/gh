@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log="${OCW_MOCK_GH_LOG:-.ocw-gh-mock.log}"
+
+if [[ $# -lt 1 ]]; then
+  printf 'mock gh: missing command\n' >&2
+  exit 2
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+  pr)
+    ;;
+  --version|version)
+    printf 'gh version 2.0.0-mock\n'
+    exit 0
+    ;;
+  *)
+    printf 'mock gh: unsupported command: %s\n' "$cmd" >&2
+    exit 2
+    ;;
+esac
+
+subcmd="${1:-}"
+shift || true
+pr_ref="${1:-}"
+shift || true
+repo=""
+mode="view"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      repo="$2"
+      shift 2
+      ;;
+    --name-only)
+      mode="name-only"
+      shift
+      ;;
+    --patch)
+      mode="patch"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+{
+  printf 'subcmd=%s\n' "$subcmd"
+  printf 'pr_ref=%s\n' "$pr_ref"
+  printf 'repo=%s\n' "$repo"
+  printf 'mode=%s\n' "$mode"
+} >> "$log"
+
+case "$subcmd:$mode" in
+  view:view)
+    cat <<EOF
+title: Mock PR $pr_ref
+state: OPEN
+author: ocw-test
+url: https://github.com/${repo:-owner/repo}/pull/$pr_ref
+base: main
+head: feature/mock-pr
+additions: 12
+deletions: 3
+changedFiles: 2
+EOF
+    ;;
+  diff:name-only)
+    printf 'src/example.go\n'
+    printf 'test/example_test.go\n'
+    ;;
+  diff:patch)
+    cat <<'EOF'
+diff --git a/src/example.go b/src/example.go
+index 1111111..2222222 100644
+--- a/src/example.go
++++ b/src/example.go
+@@ -1,4 +1,6 @@
+ package example
+ 
+ func Add(a int, b int) int {
++	if a == 0 {
++		return b
++	}
+ 	return a + b
+ }
+diff --git a/test/example_test.go b/test/example_test.go
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/test/example_test.go
+@@ -0,0 +1,3 @@
++package example
++
++// mock test fixture
+EOF
+    ;;
+  *)
+    printf 'mock gh: unsupported pr invocation: %s %s\n' "$subcmd" "$mode" >&2
+    exit 2
+    ;;
+esac

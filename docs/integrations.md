@@ -269,6 +269,8 @@ ocw apply latest --check
 ocw apply latest
 ocw bench --iterations 2
 ocw batch tasks.ocw --concurrency 3
+ocw pr summary 123
+ocw pr review 123
 ```
 
 Default models:
@@ -312,6 +314,38 @@ ocw clean --days 14 --yes
 ```
 
 `ocw clean` prints candidates by default. It removes runs only when `--yes` is present.
+
+## Pull Requests
+
+Use `ocw pr summary` for a cheap local PR brief:
+
+```bash
+ocw pr summary 123
+ocw pr summary 123 --repo owner/repo
+```
+
+Use `ocw pr review` for a cheap two-worker review pass:
+
+```bash
+ocw pr review 123
+ocw pr review 123 --repo owner/repo
+```
+
+The command uses `gh pr view`, `gh pr diff --name-only`, and `gh pr diff --patch` to create local files, then runs OpenCode Go workers against those files. It does not post comments or submit a GitHub review.
+
+Review artifacts include:
+
+```text
+pr.txt
+pr.diff.patch
+pr.files.txt
+workers.tsv
+review.md
+summary.md
+metadata.txt
+```
+
+Read `review.md` or `summary.md` first, then inspect `pr.diff.patch` and individual worker outputs under `workers/` when needed.
 
 ## Project Config
 

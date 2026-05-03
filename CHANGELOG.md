@@ -2,6 +2,13 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.4.0-alpha
+
+- Add `ocw pr summary` and `ocw pr review` for GitHub PR artifacts powered by `gh` and cheap OpenCode Go workers.
+- Capture PR metadata, changed files, patch diff, worker outputs, combined review/summary reports, and metadata in local artifact directories.
+- Add `OCW_GH_BIN` for deterministic tests and custom GitHub CLI paths.
+- Add mocked `gh` tests for PR summary and review flows.
+
 ## 0.3.0-alpha
 
 - Add `ocw doctor --deep` for provider reachability, model list, output root, git state, and skill installation diagnostics.

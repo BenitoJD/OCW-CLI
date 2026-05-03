@@ -12,6 +12,8 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - `ocw apply latest --check` before applying an isolated patch draft.
 - `ocw bench --iterations 2` when comparing OpenCode Go models.
 - `ocw batch tasks.ocw --concurrency 3` for several independent worker tasks.
+- `ocw pr summary 123` for a cheap local PR brief.
+- `ocw pr review 123` for a cheap local PR review artifact.
 
 ## Workflow
 
@@ -29,6 +31,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - Use `ocw show latest --summary` to read the newest worker result.
 - Use `ocw apply latest --check` before applying worker diffs.
 - Use `ocw doctor --deep` when setup or model reachability is uncertain.
+- Use `ocw pr review` for PR review help, then verify findings yourself before commenting or approving.
 - Do not blindly apply worker patches.
 - Do not commit `.codex/opencode-workers/` or `.codex/opencode-worktrees/`.
 

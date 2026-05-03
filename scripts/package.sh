@@ -29,12 +29,13 @@ cp "$ROOT/plugins/claude/ocw/.claude-plugin/plugin.json" "$PKG_DIR/plugins/claud
 cp "$ROOT/plugins/claude/ocw/skills/opencode-worker/SKILL.md" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker/SKILL.md"
 cp "$ROOT/test/run.sh" "$PKG_DIR/test/run.sh"
 cp "$ROOT/test/fixtures/opencode" "$PKG_DIR/test/fixtures/opencode"
+cp "$ROOT/test/fixtures/gh" "$PKG_DIR/test/fixtures/gh"
 cp "$ROOT/scripts/lint.sh" "$PKG_DIR/scripts/lint.sh"
 cp "$ROOT/scripts/install-skills.sh" "$PKG_DIR/scripts/install-skills.sh"
 cp "$ROOT/scripts/package.sh" "$PKG_DIR/scripts/package.sh"
 cp "$ROOT/scripts/release-check.sh" "$PKG_DIR/scripts/release-check.sh"
 
-chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/scripts/"*.sh
+chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
 
 tar -czf "$DIST/$PKG.tar.gz" -C "$DIST" "$PKG"
 

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 OCW="$ROOT/bin/ocw"
 MOCK_OPENCODE="$ROOT/test/fixtures/opencode"
+MOCK_GH="$ROOT/test/fixtures/gh"
 TMP_ROOT="$(mktemp -d)"
 PASS=0
 FAIL=0
@@ -62,8 +63,10 @@ make_repo() {
 
 run_ocw() {
   OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_GH_BIN="$MOCK_GH" \
     OCW_OUTPUT_ROOT=".out" \
     OCW_MOCK_LOG="$PWD/mock.log" \
+    OCW_MOCK_GH_LOG="$PWD/gh.log" \
     OCW_TEST_CREATED_AT="2026-01-01T00:00:00Z" \
     "$OCW" "$@"
 }
@@ -85,7 +88,7 @@ test_help_and_doctor() {
   local output
   "$OCW" --help >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.3.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.4.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -422,6 +425,58 @@ EOF
   assert_dir ".out/batch-batch-2-review"
 }
 
+test_pr_summary_command() {
+  local repo="$TMP_ROOT/pr-summary"
+  make_repo "$repo"
+  cd "$repo"
+
+  OCW_TEST_STAMP="prsum" run_ocw pr summary 123 --repo owner/repo >/dev/null
+
+  assert_file ".out/prsum-pr-summary/pr.txt"
+  assert_file ".out/prsum-pr-summary/pr.diff.patch"
+  assert_file ".out/prsum-pr-summary/pr.files.txt"
+  assert_file ".out/prsum-pr-summary/workers.tsv"
+  assert_file ".out/prsum-pr-summary/summary.md"
+  assert_file ".out/prsum-pr-summary/metadata.txt"
+  assert_contains ".out/prsum-pr-summary/pr.txt" "Mock PR 123"
+  assert_contains ".out/prsum-pr-summary/pr.diff.patch" "diff --git"
+  assert_contains ".out/prsum-pr-summary/pr.files.txt" "src/example.go"
+  assert_contains ".out/prsum-pr-summary/workers.tsv" "summary"
+  assert_contains ".out/prsum-pr-summary/summary.md" "OCW PR summary"
+  assert_contains ".out/prsum-pr-summary/metadata.txt" "mode=pr-summary"
+  assert_contains ".out/prsum-pr-summary/metadata.txt" "repo=owner/repo"
+  assert_dir ".out/prsum-pr-summary/workers/summary-cheap"
+  assert_contains "mock.log" "files="
+  assert_contains "mock.log" "pr.txt"
+  assert_contains "mock.log" "pr.diff.patch"
+  assert_contains "mock.log" "pr.files.txt"
+  assert_contains "gh.log" "mode=patch"
+}
+
+test_pr_review_command() {
+  local repo="$TMP_ROOT/pr-review"
+  make_repo "$repo"
+  cd "$repo"
+
+  OCW_TEST_STAMP="prrev" run_ocw pr review 123 --repo owner/repo >/dev/null
+
+  assert_file ".out/prrev-pr-review/pr.txt"
+  assert_file ".out/prrev-pr-review/pr.diff.patch"
+  assert_file ".out/prrev-pr-review/pr.files.txt"
+  assert_file ".out/prrev-pr-review/workers.tsv"
+  assert_file ".out/prrev-pr-review/review.md"
+  assert_file ".out/prrev-pr-review/summary.md"
+  assert_file ".out/prrev-pr-review/metadata.txt"
+  assert_contains ".out/prrev-pr-review/workers.tsv" "findings"
+  assert_contains ".out/prrev-pr-review/workers.tsv" "risk-tests"
+  assert_contains ".out/prrev-pr-review/review.md" "OCW PR review"
+  assert_contains ".out/prrev-pr-review/review.md" "Findings worker"
+  assert_contains ".out/prrev-pr-review/review.md" "Risk and tests worker"
+  assert_contains ".out/prrev-pr-review/metadata.txt" "mode=pr-review"
+  assert_dir ".out/prrev-pr-review/workers/findings-cheap"
+  assert_dir ".out/prrev-pr-review/workers/risk-tests-cheap"
+}
+
 run_test "help and doctor" test_help_and_doctor
 run_test "default routing" test_default_routing
 run_test "overrides and summary" test_overrides_and_summary
@@ -441,6 +496,8 @@ run_test "skill installer" test_skill_installer
 run_test "agent pack install" test_agent_pack_install
 run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
+run_test "pr summary command" test_pr_summary_command
+run_test "pr review command" test_pr_review_command
 
 say "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
