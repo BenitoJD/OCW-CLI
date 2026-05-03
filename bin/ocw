@@ -416,8 +416,21 @@ json_string() {
 
 file_size_bytes() {
   local file="$1"
+  local size
 
-  stat -f '%z' "$file" 2>/dev/null || stat -c '%s' "$file" 2>/dev/null || wc -c < "$file" | tr -d ' '
+  size="$(stat -f '%z' "$file" 2>/dev/null || true)"
+  if [[ "$size" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$size"
+    return
+  fi
+
+  size="$(stat -c '%s' "$file" 2>/dev/null || true)"
+  if [[ "$size" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$size"
+    return
+  fi
+
+  wc -c < "$file" | tr -d ' '
 }
 
 file_sha256() {
