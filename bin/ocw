@@ -152,7 +152,7 @@ git_is_clean_for_apply() {
   output_abs="$(abs_existing_dir "$output_root")"
   output_rel=""
   if [[ "$output_abs" == "$repo_root/"* ]]; then
-    output_rel="${output_abs#$repo_root/}"
+    output_rel="${output_abs#"$repo_root"/}"
   fi
 
   while IFS= read -r line; do
@@ -160,9 +160,6 @@ git_is_clean_for_apply() {
     path="${line:3}"
     case "$path" in
       .codex|.codex/|.codex/*)
-        continue
-        ;;
-      .codex/opencode-workers|.codex/opencode-workers/*|.codex/opencode-worktrees|.codex/opencode-worktrees/*)
         continue
         ;;
     esac
