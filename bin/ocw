@@ -1,8 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.0-alpha"
+VERSION="0.2.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
+SKILL_NAME="opencode-worker"
+
+resolve_script_dir() {
+  local source="${BASH_SOURCE[0]}"
+  local dir target
+
+  while [[ -L "$source" ]]; do
+    dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd)"
+    target="$(readlink "$source")"
+    if [[ "$target" == /* ]]; then
+      source="$target"
+    else
+      source="$dir/$target"
+    fi
+  done
+
+  cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir)"
+OCW_HOME="${OCW_HOME:-$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd -P)}"
 
 usage() {
   cat <<'EOF'
@@ -10,20 +31,32 @@ ocw - OpenCode Go workers for Codex-style orchestration
 
 Usage:
   ocw [options] <explore|review|patch|scan|cheap> <task...>
+  ocw init [options]
+  ocw last [mode]
+  ocw show [latest|run-dir] [--summary|--diff|--stat|--status|--metadata|--jsonl|--path]
+  ocw apply [latest|run-dir] [--check] [--allow-dirty] [--force]
+  ocw clean (--days N|--all) [--dry-run] [--yes]
+  ocw stats [opencode-stats-options...]
+  ocw serve [opencode-serve-options...]
   ocw doctor
   ocw models [opencode-models-options...]
   ocw version
 
-Options:
+Worker options:
   -m, --model MODEL       Override the default OpenCode Go model
   -a, --agent AGENT       Override the OpenCode agent
   -o, --out DIR           Override output directory root
       --variant VARIANT   Pass a model variant such as low, medium, high, or max
+      --attach URL        Attach opencode run to a running opencode serve backend
       --file PATH         Attach a file to the OpenCode prompt; repeatable
       --auto-approve      Pass OpenCode's dangerous permission skip flag
+      --no-auto-approve   Override config and do not skip permissions
       --require-clean     Fail unless the current git worktree is clean
+      --no-require-clean  Override config and allow a dirty git worktree
       --worktree          Run patch mode in an isolated git worktree
+      --no-worktree       Override config and run patch mode in the current tree
       --rm-worktree       Remove the isolated worktree after capturing diffs
+      --keep-worktree     Override config and keep the isolated worktree
   -h, --help              Show this help
 
 Default routing:
@@ -32,6 +65,9 @@ Default routing:
   patch   -> opencode-go/kimi-k2.6, agent build
   scan    -> opencode-go/mimo-v2.5, agent plan
   cheap   -> opencode-go/qwen3.5-plus, agent plan
+
+Project config:
+  .ocw.toml supports [models], [agents], and [defaults].
 
 Output:
   .codex/opencode-workers/<timestamp>-<mode>/
@@ -58,18 +94,183 @@ require_command() {
   have_command "$1" || die "required command not found: $1"
 }
 
+trim() {
+  printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+unquote() {
+  local value="$1"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value#\"}"
+    value="${value%\"}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value#\'}"
+    value="${value%\'}"
+  fi
+  printf '%s\n' "$value"
+}
+
+normalize_bool() {
+  local key="$1"
+  local value
+  value="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+
+  case "$value" in
+    1|true|yes|on)
+      printf '1\n'
+      ;;
+    0|false|no|off)
+      printf '0\n'
+      ;;
+    *)
+      die "invalid boolean for $key: $2"
+      ;;
+  esac
+}
+
 git_is_repo() {
   "$GIT_BIN" -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+git_root() {
+  "$GIT_BIN" -C "$1" rev-parse --show-toplevel 2>/dev/null || true
 }
 
 git_is_clean() {
   [[ -z "$("$GIT_BIN" -C "$1" status --porcelain --untracked-files=normal)" ]]
 }
 
+git_is_clean_for_apply() {
+  local dir="$1"
+  local output_root="$2"
+  local repo_root output_abs output_rel status line path
+
+  status="$("$GIT_BIN" -C "$dir" status --porcelain --untracked-files=normal)"
+  [[ -n "$status" ]] || return 0
+
+  repo_root="$(abs_existing_dir "$(git_root "$dir")")"
+  output_abs="$(abs_existing_dir "$output_root")"
+  output_rel=""
+  if [[ "$output_abs" == "$repo_root/"* ]]; then
+    output_rel="${output_abs#$repo_root/}"
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    path="${line:3}"
+    case "$path" in
+      .codex|.codex/|.codex/*)
+        continue
+        ;;
+      .codex/opencode-workers|.codex/opencode-workers/*|.codex/opencode-worktrees|.codex/opencode-worktrees/*)
+        continue
+        ;;
+    esac
+    if [[ -n "$output_rel" ]]; then
+      case "$path" in
+        "$output_rel"|"$output_rel"/|"$output_rel"/*)
+          continue
+          ;;
+      esac
+    fi
+    return 1
+  done <<EOF
+$status
+EOF
+
+  return 0
+}
+
+set_config_value() {
+  local section="$1"
+  local key="$2"
+  local value="$3"
+
+  case "$section:$key" in
+    models:cheap) OCW_CONFIG_CHEAP_MODEL="$value" ;;
+    models:explore) OCW_CONFIG_EXPLORE_MODEL="$value" ;;
+    models:review) OCW_CONFIG_REVIEW_MODEL="$value" ;;
+    models:patch) OCW_CONFIG_PATCH_MODEL="$value" ;;
+    models:scan) OCW_CONFIG_SCAN_MODEL="$value" ;;
+    agents:cheap) OCW_CONFIG_CHEAP_AGENT="$value" ;;
+    agents:explore) OCW_CONFIG_EXPLORE_AGENT="$value" ;;
+    agents:review) OCW_CONFIG_REVIEW_AGENT="$value" ;;
+    agents:patch) OCW_CONFIG_PATCH_AGENT="$value" ;;
+    agents:scan) OCW_CONFIG_SCAN_AGENT="$value" ;;
+    defaults:output_root) OCW_CONFIG_OUTPUT_ROOT="$value" ;;
+    defaults:variant) OCW_CONFIG_VARIANT="$value" ;;
+    defaults:attach) OCW_CONFIG_ATTACH="$value" ;;
+    defaults:worktree) OCW_CONFIG_WORKTREE="$(normalize_bool "$key" "$value")" ;;
+    defaults:rm_worktree) OCW_CONFIG_RM_WORKTREE="$(normalize_bool "$key" "$value")" ;;
+    defaults:require_clean) OCW_CONFIG_REQUIRE_CLEAN="$(normalize_bool "$key" "$value")" ;;
+    defaults:auto_approve) OCW_CONFIG_AUTO_APPROVE="$(normalize_bool "$key" "$value")" ;;
+    *)
+      ;;
+  esac
+}
+
+find_config_file() {
+  local root
+
+  if [[ -n "${OCW_CONFIG:-}" ]]; then
+    [[ -f "$OCW_CONFIG" ]] || die "config file not found: $OCW_CONFIG"
+    printf '%s\n' "$OCW_CONFIG"
+    return
+  fi
+
+  if have_command "$GIT_BIN"; then
+    root="$(git_root "$PWD")"
+    if [[ -n "$root" && -f "$root/.ocw.toml" ]]; then
+      printf '%s\n' "$root/.ocw.toml"
+      return
+    fi
+  fi
+
+  if [[ -f ".ocw.toml" ]]; then
+    printf '%s\n' ".ocw.toml"
+  fi
+
+  return 0
+}
+
+load_config() {
+  local config_file section line key value
+
+  config_file="$(find_config_file || true)"
+  if [[ -z "$config_file" ]]; then
+    return 0
+  fi
+  OCW_CONFIG_FILE="$config_file"
+  section=""
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="$(trim "$line")"
+    [[ -z "$line" ]] && continue
+
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    [[ "$line" == *=* ]] || continue
+    key="$(trim "${line%%=*}")"
+    value="$(trim "${line#*=}")"
+    value="$(unquote "$value")"
+    set_config_value "$section" "$key" "$value"
+  done < "$config_file"
+}
+
 prepare_output_root() {
   local root="$1"
   mkdir -p "$root"
   (cd "$root" && pwd -P)
+}
+
+abs_existing_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || die "directory not found: $dir"
+  (cd "$dir" && pwd -P)
 }
 
 allocate_output_dir() {
@@ -138,8 +339,61 @@ extract_summary() {
   fi
 }
 
+metadata_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 0
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print }' "$file" | tail -n 1
+}
+
+latest_run_dir() {
+  local root="$1"
+  local mode="${2:-}"
+  local latest
+
+  [[ -d "$root" ]] || die "output root not found: $root"
+
+  if [[ -n "$mode" ]]; then
+    latest="$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "*-$mode*" -print | sort | tail -n 1)"
+  else
+    latest="$(find "$root" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -n 1)"
+  fi
+
+  [[ -n "$latest" ]] || die "no OCW runs found in $root"
+  abs_existing_dir "$latest"
+}
+
+resolve_run_dir() {
+  local root="$1"
+  local ref="${2:-latest}"
+  local mode_filter="${3:-}"
+
+  if [[ -z "$ref" || "$ref" == "latest" ]]; then
+    latest_run_dir "$root" "$mode_filter"
+    return
+  fi
+
+  if [[ -d "$ref" ]]; then
+    abs_existing_dir "$ref"
+    return
+  fi
+
+  if [[ -d "$root/$ref" ]]; then
+    abs_existing_dir "$root/$ref"
+    return
+  fi
+
+  die "OCW run not found: $ref"
+}
+
 doctor() {
   printf 'ocw %s\n' "$VERSION"
+
+  if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
+    printf 'config: %s\n' "$OCW_CONFIG_FILE"
+  else
+    printf 'config: none\n'
+  fi
 
   if have_command "$OPENCODE_BIN"; then
     printf 'opencode: %s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")"
@@ -166,13 +420,413 @@ doctor() {
   fi
 }
 
+copy_if_needed() {
+  local source="$1"
+  local target="$2"
+  local label="$3"
+  local force="$4"
+
+  [[ -f "$source" ]] || die "template not found: $source"
+  mkdir -p "$(dirname "$target")"
+
+  if [[ -e "$target" && "$force" -ne 1 ]]; then
+    printf 'Kept existing %s: %s\n' "$label" "$target"
+    return
+  fi
+
+  cp "$source" "$target"
+  printf 'Installed %s: %s\n' "$label" "$target"
+}
+
+ensure_gitignore_entry() {
+  local gitignore="$1"
+  local entry="$2"
+
+  touch "$gitignore"
+  if grep -Fxq "$entry" "$gitignore"; then
+    return
+  fi
+
+  if [[ -s "$gitignore" ]]; then
+    printf '\n' >> "$gitignore"
+  fi
+  printf '%s\n' "$entry" >> "$gitignore"
+}
+
+write_default_config() {
+  local target="$1"
+  local force="$2"
+
+  if [[ -e "$target" && "$force" -ne 1 ]]; then
+    printf 'Kept existing config: %s\n' "$target"
+    return
+  fi
+
+  cat > "$target" <<'EOF'
+[models]
+cheap = "opencode-go/qwen3.5-plus"
+explore = "opencode-go/deepseek-v4-flash"
+scan = "opencode-go/mimo-v2.5"
+review = "opencode-go/deepseek-v4-pro"
+patch = "opencode-go/kimi-k2.6"
+
+[agents]
+cheap = "plan"
+explore = "plan"
+scan = "plan"
+review = "plan"
+patch = "build"
+
+[defaults]
+output_root = ".codex/opencode-workers"
+worktree = true
+rm_worktree = false
+require_clean = false
+auto_approve = false
+# attach = "http://localhost:4096"
+EOF
+
+  printf 'Installed config: %s\n' "$target"
+}
+
+install_agent_skill() {
+  local label="$1"
+  local skills_dir="$2"
+  local source="$OCW_HOME/skills/$SKILL_NAME/SKILL.md"
+  local target="$skills_dir/$SKILL_NAME"
+
+  [[ -f "$source" ]] || die "skill source not found: $source"
+  mkdir -p "$target"
+  cp "$source" "$target/SKILL.md"
+  printf 'Installed %s skill: %s\n' "$label" "$target"
+}
+
+init_project() {
+  local install_codex=1
+  local install_claude=1
+  local install_gitignore=1
+  local install_config=1
+  local install_skills=1
+  local force=0
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local claude_home="${CLAUDE_HOME:-$HOME/.claude}"
+  local codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-$codex_home/skills}"
+  local claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-$claude_home/skills}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --codex) install_codex=1; shift ;;
+      --claude) install_claude=1; shift ;;
+      --skills) install_skills=1; shift ;;
+      --gitignore) install_gitignore=1; shift ;;
+      --config) install_config=1; shift ;;
+      --no-codex) install_codex=0; shift ;;
+      --no-claude) install_claude=0; shift ;;
+      --no-skills) install_skills=0; shift ;;
+      --no-gitignore) install_gitignore=0; shift ;;
+      --no-config) install_config=0; shift ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw init [options]
+
+Options:
+  --codex / --no-codex        Install AGENTS.md project instructions
+  --claude / --no-claude      Install CLAUDE.md project instructions
+  --skills / --no-skills      Install personal Codex and Claude Code skills
+  --gitignore / --no-gitignore
+  --config / --no-config      Install .ocw.toml
+  --force                     Overwrite project instruction/config files
+EOF
+        return
+        ;;
+      *)
+        die "unknown init option: $1"
+        ;;
+    esac
+  done
+
+  if [[ "$install_gitignore" -eq 1 ]]; then
+    ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
+    ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+    printf 'Updated gitignore: .gitignore\n'
+  fi
+
+  if [[ "$install_config" -eq 1 ]]; then
+    write_default_config ".ocw.toml" "$force"
+  fi
+
+  if [[ "$install_codex" -eq 1 ]]; then
+    copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
+  fi
+
+  if [[ "$install_claude" -eq 1 ]]; then
+    copy_if_needed "$OCW_HOME/examples/claude/CLAUDE.md" "CLAUDE.md" "Claude Code instructions" "$force"
+  fi
+
+  if [[ "$install_skills" -eq 1 ]]; then
+    install_agent_skill "Codex" "$codex_skills_dir"
+    install_agent_skill "Claude Code" "$claude_skills_dir"
+  fi
+
+  printf 'OCW init complete\n'
+}
+
+last_command() {
+  local root="$1"
+  shift
+  local mode=""
+
+  if [[ $# -gt 0 ]]; then
+    mode="$1"
+  fi
+
+  root="$(abs_existing_dir "$root")"
+  latest_run_dir "$root" "$mode"
+}
+
+show_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local view="default"
+  local run_dir
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --summary) view="summary"; shift ;;
+      --diff) view="diff"; shift ;;
+      --stat) view="stat"; shift ;;
+      --status) view="status"; shift ;;
+      --metadata) view="metadata"; shift ;;
+      --jsonl) view="jsonl"; shift ;;
+      --path) view="path"; shift ;;
+      -h|--help)
+        printf 'Usage: ocw show [latest|run-dir] [--summary|--diff|--stat|--status|--metadata|--jsonl|--path]\n'
+        return
+        ;;
+      -*)
+        die "unknown show option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  root="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root" "$ref")"
+
+  case "$view" in
+    path)
+      printf '%s\n' "$run_dir"
+      ;;
+    summary)
+      [[ -f "$run_dir/summary.md" ]] || die "summary not found: $run_dir/summary.md"
+      cat "$run_dir/summary.md"
+      ;;
+    diff)
+      [[ -f "$run_dir/diff.after.patch" ]] || die "diff not found: $run_dir/diff.after.patch"
+      cat "$run_dir/diff.after.patch"
+      ;;
+    stat)
+      [[ -f "$run_dir/diff.after.stat" ]] || die "diff stat not found: $run_dir/diff.after.stat"
+      cat "$run_dir/diff.after.stat"
+      ;;
+    status)
+      [[ -f "$run_dir/status.after.txt" ]] || die "status not found: $run_dir/status.after.txt"
+      cat "$run_dir/status.after.txt"
+      ;;
+    metadata)
+      [[ -f "$run_dir/metadata.txt" ]] || die "metadata not found: $run_dir/metadata.txt"
+      cat "$run_dir/metadata.txt"
+      ;;
+    jsonl)
+      [[ -f "$run_dir/result.jsonl" ]] || die "result JSONL not found: $run_dir/result.jsonl"
+      cat "$run_dir/result.jsonl"
+      ;;
+    default)
+      printf 'OCW run: %s\n\n' "$run_dir"
+      if [[ -f "$run_dir/summary.md" ]]; then
+        cat "$run_dir/summary.md"
+      fi
+      if [[ -s "$run_dir/diff.after.stat" ]]; then
+        printf '\nDiff stat:\n'
+        cat "$run_dir/diff.after.stat"
+      fi
+      ;;
+    *)
+      die "unknown show view: $view"
+      ;;
+  esac
+}
+
+apply_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local check_only=0
+  local allow_dirty=0
+  local force=0
+  local run_dir patch worktree
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) check_only=1; shift ;;
+      --allow-dirty) allow_dirty=1; shift ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw apply [latest|run-dir] [--check] [--allow-dirty] [--force]\n'
+        return
+        ;;
+      -*)
+        die "unknown apply option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  require_command "$GIT_BIN"
+  git_is_repo "$PWD" || die "apply requires a git repository"
+
+  root="$(abs_existing_dir "$root")"
+  if [[ "$ref" == "latest" || -z "$ref" ]]; then
+    run_dir="$(resolve_run_dir "$root" "latest" "patch")"
+  else
+    run_dir="$(resolve_run_dir "$root" "$ref")"
+  fi
+
+  patch="$run_dir/diff.after.patch"
+  [[ -s "$patch" ]] || die "patch is empty: $patch"
+
+  worktree="$(metadata_value "$run_dir/metadata.txt" "worktree")"
+  if [[ "$worktree" != "1" && "$force" -ne 1 ]]; then
+    die "refusing to apply a non-worktree run; pass --force if you intentionally want this"
+  fi
+
+  if [[ "$allow_dirty" -ne 1 ]]; then
+    git_is_clean_for_apply "$PWD" "$root" || die "git worktree is not clean; pass --allow-dirty to override"
+  fi
+
+  "$GIT_BIN" -C "$PWD" apply --check "$patch"
+
+  if [[ "$check_only" -eq 1 ]]; then
+    printf 'Patch can be applied: %s\n' "$patch"
+    return
+  fi
+
+  "$GIT_BIN" -C "$PWD" apply "$patch"
+  printf 'Applied patch: %s\n' "$patch"
+  "$GIT_BIN" -C "$PWD" diff --stat || true
+}
+
+clean_command() {
+  local root="$1"
+  shift
+  local days=""
+  local all=0
+  local dry_run=0
+  local yes=0
+  local targets_file dir count
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days)
+        [[ $# -ge 2 ]] || die "--days requires a value"
+        days="$2"
+        shift 2
+        ;;
+      --all)
+        all=1
+        shift
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      --yes)
+        yes=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw clean (--days N|--all) [--dry-run] [--yes]\n'
+        return
+        ;;
+      *)
+        die "unknown clean option: $1"
+        ;;
+    esac
+  done
+
+  [[ "$all" -eq 1 || -n "$days" ]] || die "clean requires --days N or --all"
+  if [[ -n "$days" && ! "$days" =~ ^[0-9]+$ ]]; then
+    die "--days must be a non-negative integer"
+  fi
+
+  root="$(abs_existing_dir "$root")"
+  if [[ "$root" == "/" || "$root" == "$HOME" || "$root" == "$PWD" ]]; then
+    die "refusing unsafe clean root: $root"
+  fi
+
+  targets_file="$(mktemp "${TMPDIR:-/tmp}/ocw-clean.XXXXXX")"
+  if [[ "$all" -eq 1 ]]; then
+    find "$root" -mindepth 1 -maxdepth 1 -type d -print | sort > "$targets_file"
+  else
+    find "$root" -mindepth 1 -maxdepth 1 -type d -mtime +"$days" -print | sort > "$targets_file"
+  fi
+
+  if [[ ! -s "$targets_file" ]]; then
+    rm -f "$targets_file"
+    printf 'No OCW runs matched clean criteria\n'
+    return
+  fi
+
+  count=0
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    count=$((count + 1))
+    if [[ "$dry_run" -eq 1 || "$yes" -ne 1 ]]; then
+      printf '%s\n' "$dir"
+    else
+      rm -rf "$dir"
+    fi
+  done < "$targets_file"
+
+  rm -f "$targets_file"
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf 'Dry run: %s run(s) matched\n' "$count"
+  elif [[ "$yes" -ne 1 ]]; then
+    printf 'Pass --yes to remove %s run(s)\n' "$count"
+  else
+    printf 'Removed %s run(s)\n' "$count"
+  fi
+}
+
+stats_command() {
+  require_command "$OPENCODE_BIN"
+  "$OPENCODE_BIN" stats "$@"
+}
+
+serve_command() {
+  require_command "$OPENCODE_BIN"
+  "$OPENCODE_BIN" serve "$@"
+}
+
 OPENCODE_BIN="${OCW_OPENCODE_BIN:-opencode}"
 GIT_BIN="${OCW_GIT_BIN:-git}"
+load_config
 
 if [[ $# -eq 0 ]]; then
   usage
   exit 2
 fi
+
+out_base="${OCW_OUTPUT_ROOT:-${OCW_CONFIG_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}}"
 
 case "$1" in
   -h|--help|help)
@@ -187,6 +841,41 @@ case "$1" in
     doctor
     exit 0
     ;;
+  init)
+    shift
+    init_project "$@"
+    exit 0
+    ;;
+  last)
+    shift
+    last_command "$out_base" "$@"
+    exit 0
+    ;;
+  show)
+    shift
+    show_command "$out_base" "$@"
+    exit 0
+    ;;
+  apply)
+    shift
+    apply_command "$out_base" "$@"
+    exit 0
+    ;;
+  clean)
+    shift
+    clean_command "$out_base" "$@"
+    exit 0
+    ;;
+  stats)
+    shift
+    stats_command "$@"
+    exit $?
+    ;;
+  serve)
+    shift
+    serve_command "$@"
+    exit $?
+    ;;
   models)
     shift
     require_command "$OPENCODE_BIN"
@@ -198,12 +887,14 @@ esac
 mode=""
 model=""
 agent=""
-variant=""
-out_base="${OCW_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}"
-auto_approve=0
-require_clean=0
+variant="${OCW_VARIANT:-${OCW_CONFIG_VARIANT:-}}"
+attach_url="${OCW_ATTACH:-${OCW_CONFIG_ATTACH:-}}"
+auto_approve="${OCW_CONFIG_AUTO_APPROVE:-0}"
+require_clean="${OCW_CONFIG_REQUIRE_CLEAN:-0}"
 use_worktree=0
 remove_worktree=0
+worktree_flag_set=0
+remove_worktree_flag_set=0
 files=()
 
 while [[ $# -gt 0 ]]; do
@@ -232,6 +923,11 @@ while [[ $# -gt 0 ]]; do
       variant="$2"
       shift 2
       ;;
+    --attach)
+      [[ $# -ge 2 ]] || die "--attach requires a value"
+      attach_url="$2"
+      shift 2
+      ;;
     --file)
       [[ $# -ge 2 ]] || die "--file requires a value"
       files+=("$2")
@@ -241,16 +937,36 @@ while [[ $# -gt 0 ]]; do
       auto_approve=1
       shift
       ;;
+    --no-auto-approve)
+      auto_approve=0
+      shift
+      ;;
     --require-clean)
       require_clean=1
       shift
       ;;
+    --no-require-clean)
+      require_clean=0
+      shift
+      ;;
     --worktree)
       use_worktree=1
+      worktree_flag_set=1
+      shift
+      ;;
+    --no-worktree)
+      use_worktree=0
+      worktree_flag_set=1
       shift
       ;;
     --rm-worktree)
       remove_worktree=1
+      remove_worktree_flag_set=1
+      shift
+      ;;
+    --keep-worktree)
+      remove_worktree=0
+      remove_worktree_flag_set=1
       shift
       ;;
     --)
@@ -273,30 +989,38 @@ done
 
 task="$*"
 
+if [[ "$mode" == "patch" && "$worktree_flag_set" -eq 0 ]]; then
+  use_worktree="${OCW_CONFIG_WORKTREE:-0}"
+fi
+
+if [[ "$mode" == "patch" && "$remove_worktree_flag_set" -eq 0 ]]; then
+  remove_worktree="${OCW_CONFIG_RM_WORKTREE:-0}"
+fi
+
 case "$mode" in
   explore)
-    model="${model:-${OCW_EXPLORE_MODEL:-opencode-go/deepseek-v4-flash}}"
-    agent="${agent:-${OCW_EXPLORE_AGENT:-plan}}"
+    model="${model:-${OCW_EXPLORE_MODEL:-${OCW_CONFIG_EXPLORE_MODEL:-opencode-go/deepseek-v4-flash}}}"
+    agent="${agent:-${OCW_EXPLORE_AGENT:-${OCW_CONFIG_EXPLORE_AGENT:-plan}}}"
     guardrail="Do not edit files. Explore the repository and return compact findings with exact file paths and symbols."
     ;;
   review)
-    model="${model:-${OCW_REVIEW_MODEL:-opencode-go/deepseek-v4-pro}}"
-    agent="${agent:-${OCW_REVIEW_AGENT:-plan}}"
+    model="${model:-${OCW_REVIEW_MODEL:-${OCW_CONFIG_REVIEW_MODEL:-opencode-go/deepseek-v4-pro}}}"
+    agent="${agent:-${OCW_REVIEW_AGENT:-${OCW_CONFIG_REVIEW_AGENT:-plan}}}"
     guardrail="Do not edit files. Review for bugs, behavior regressions, security issues, missing tests, and risky assumptions."
     ;;
   patch)
-    model="${model:-${OCW_PATCH_MODEL:-opencode-go/kimi-k2.6}}"
-    agent="${agent:-${OCW_PATCH_AGENT:-build}}"
+    model="${model:-${OCW_PATCH_MODEL:-${OCW_CONFIG_PATCH_MODEL:-opencode-go/kimi-k2.6}}}"
+    agent="${agent:-${OCW_PATCH_AGENT:-${OCW_CONFIG_PATCH_AGENT:-build}}}"
     guardrail="Make the smallest safe code change. Do not commit. Avoid unrelated refactors. Summarize files changed and tests run."
     ;;
   scan)
-    model="${model:-${OCW_SCAN_MODEL:-opencode-go/mimo-v2.5}}"
-    agent="${agent:-${OCW_SCAN_AGENT:-plan}}"
+    model="${model:-${OCW_SCAN_MODEL:-${OCW_CONFIG_SCAN_MODEL:-opencode-go/mimo-v2.5}}}"
+    agent="${agent:-${OCW_SCAN_AGENT:-${OCW_CONFIG_SCAN_AGENT:-plan}}}"
     guardrail="Do not edit files. Scan broad repository context and return a compact map of relevant files, flows, and risks."
     ;;
   cheap)
-    model="${model:-${OCW_CHEAP_MODEL:-opencode-go/qwen3.5-plus}}"
-    agent="${agent:-${OCW_CHEAP_AGENT:-plan}}"
+    model="${model:-${OCW_CHEAP_MODEL:-${OCW_CONFIG_CHEAP_MODEL:-opencode-go/qwen3.5-plus}}}"
+    agent="${agent:-${OCW_CHEAP_AGENT:-${OCW_CONFIG_CHEAP_AGENT:-plan}}}"
     guardrail="Do not edit files. Do cheap routine analysis and return a terse, structured answer with exact paths when relevant."
     ;;
   *)
@@ -363,6 +1087,10 @@ args=(
   --format json
 )
 
+if [[ -n "$attach_url" ]]; then
+  args+=(--attach "$attach_url")
+fi
+
 if [[ -n "$variant" ]]; then
   args+=(--variant "$variant")
 fi
@@ -397,6 +1125,7 @@ created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
   printf 'model=%s\n' "$model"
   printf 'agent=%s\n' "$agent"
   printf 'variant=%s\n' "$variant"
+  printf 'attach_url=%s\n' "$attach_url"
   printf 'status=%s\n' "$status"
   printf 'project_dir=%s\n' "$project_dir"
   printf 'run_dir=%s\n' "$run_dir"
@@ -407,6 +1136,7 @@ created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
   printf 'worktree=%s\n' "$use_worktree"
   printf 'worktree_path=%s\n' "$worktree_path"
   printf 'remove_worktree=%s\n' "$remove_worktree"
+  printf 'config_file=%s\n' "${OCW_CONFIG_FILE:-}"
 } > "$out_dir/metadata.txt"
 
 extract_summary "$out_dir/result.jsonl" "$out_dir/summary.md"

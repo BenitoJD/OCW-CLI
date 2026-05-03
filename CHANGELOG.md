@@ -2,6 +2,16 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.2.0-alpha
+
+- Add `ocw init` for project bootstrap, `.ocw.toml`, `.gitignore`, project instructions, and skill installation.
+- Add `.ocw.toml` routing for models, agents, defaults, worktree behavior, and attach URLs.
+- Add `ocw last`, `ocw show`, and `ocw clean` for worker artifact management.
+- Add `ocw apply` with `git apply --check` validation for isolated worktree patch drafts.
+- Add `ocw stats`, `ocw serve`, and worker `--attach` support for OpenCode server/cost workflows.
+- Add Claude Code plugin packaging for the `opencode-worker` skill.
+- Expand mocked tests across init, config, attach, artifacts, apply, stats, serve, skills, and plugin assets.
+
 ## 0.1.0-alpha
 
 - Add `explore`, `review`, `patch`, `scan`, and `cheap` worker modes.

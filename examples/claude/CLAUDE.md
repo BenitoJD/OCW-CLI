@@ -9,6 +9,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - `ocw scan "<task>"` for broad or long-context scans.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.
 - `ocw --worktree patch "<task>"` for bounded patch drafts in an isolated git worktree.
+- `ocw apply latest --check` before applying an isolated patch draft.
 
 ## Workflow
 
@@ -23,6 +24,8 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 
 - Prefer read-only modes before patch mode.
 - Use `--worktree` for patch drafts in important repositories.
+- Use `ocw show latest --summary` to read the newest worker result.
+- Use `ocw apply latest --check` before applying worker diffs.
 - Do not blindly apply worker patches.
 - Do not commit `.codex/opencode-workers/` or `.codex/opencode-worktrees/`.
 

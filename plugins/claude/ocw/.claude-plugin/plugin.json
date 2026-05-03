@@ -1,0 +1,5 @@
+{
+  "name": "ocw",
+  "version": "0.2.0-alpha",
+  "description": "OpenCode Go worker orchestration skill for Claude Code."
+}

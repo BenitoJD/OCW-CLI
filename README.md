@@ -40,6 +40,14 @@ Check your setup:
 ocw doctor
 ```
 
+Bootstrap a project:
+
+```bash
+ocw init
+```
+
+This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, and the reusable personal skills.
+
 ## Usage
 
 ```bash
@@ -47,7 +55,7 @@ ocw explore "Find where auth errors are handled"
 ocw cheap "Summarize this small config flow"
 ocw scan "Map the billing flow across the repo"
 ocw review "Review the current diff for regressions"
-ocw patch "Draft the smallest safe fix for the failing validation"
+ocw --worktree patch "Draft the smallest safe fix for the failing validation"
 ```
 
 Default routing:
@@ -65,7 +73,34 @@ Override anything:
 ```bash
 ocw --model opencode-go/minimax-m2.7 --agent build cheap "Try a second opinion"
 ocw --variant high explore "Map the API flow"
+ocw --attach http://localhost:4096 scan "Map the billing flow"
 ocw --file ./notes.md review "Review this plan"
+```
+
+Inspect worker artifacts:
+
+```bash
+ocw last
+ocw show latest --summary
+ocw show latest --diff
+ocw clean --days 14 --dry-run
+ocw clean --days 14 --yes
+```
+
+Safely apply an isolated patch draft:
+
+```bash
+ocw --worktree patch "Draft the fix"
+ocw apply latest --check
+ocw apply latest
+```
+
+Pass through OpenCode cost and server commands:
+
+```bash
+ocw stats --days 7 --models 10
+ocw serve --port 4096
+ocw --attach http://localhost:4096 cheap "Use the warm backend"
 ```
 
 ## Agent Integrations
@@ -111,6 +146,18 @@ Full guide:
 docs/integrations.md
 ```
 
+Claude Code plugin package:
+
+```text
+plugins/claude/ocw
+```
+
+For local Claude Code plugin testing:
+
+```bash
+claude --plugin-dir plugins/claude/ocw
+```
+
 ## Output
 
 Each run writes to:
@@ -133,6 +180,8 @@ metadata.txt
 
 Read `summary.md` first. Inspect `diff.after.patch` when a worker changed files.
 
+Use `ocw show latest` instead of manually searching output directories.
+
 ## Safer Patch Mode
 
 For important repos, use a clean worktree:
@@ -153,6 +202,13 @@ You can remove the worktree automatically after capturing the diff:
 
 ```bash
 ocw --worktree --rm-worktree patch "Draft the fix"
+```
+
+Apply the captured diff only after a check passes:
+
+```bash
+ocw apply latest --check
+ocw apply latest
 ```
 
 For direct patch mode, you can require a clean git tree:
@@ -177,12 +233,35 @@ Codex should treat OpenCode output as draft labor:
 4. Apply or reject the worker output.
 5. Run tests.
 
+## Project Config
+
+`ocw init` creates `.ocw.toml`:
+
+```toml
+[models]
+cheap = "opencode-go/qwen3.5-plus"
+explore = "opencode-go/deepseek-v4-flash"
+scan = "opencode-go/mimo-v2.5"
+review = "opencode-go/deepseek-v4-pro"
+patch = "opencode-go/kimi-k2.6"
+
+[defaults]
+output_root = ".codex/opencode-workers"
+worktree = true
+# attach = "http://localhost:4096"
+```
+
+Precedence is: CLI flags, environment variables, `.ocw.toml`, built-in defaults.
+
 ## Environment
 
 ```text
 OCW_OUTPUT_ROOT      Override output root
 OCW_OPENCODE_BIN     Override opencode binary, useful for tests
 OCW_GIT_BIN          Override git binary
+OCW_CONFIG           Override config file path
+OCW_ATTACH           Default opencode run --attach URL
+OCW_VARIANT          Default model variant
 OCW_EXPLORE_MODEL    Override explore default model
 OCW_REVIEW_MODEL     Override review default model
 OCW_PATCH_MODEL      Override patch default model
@@ -198,7 +277,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, and Codex/Claude Code skill installation.
+The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, cleanup, stats/serve passthrough, plugin assets, and Codex/Claude Code skill installation.
 
 Run the full local quality gate:
 
@@ -225,8 +304,8 @@ make release-check
 Tag releases with signed tags:
 
 ```bash
-git tag -s v0.1.0-alpha -m "v0.1.0-alpha"
-git push origin v0.1.0-alpha
+git tag -s v0.2.0-alpha -m "v0.2.0-alpha"
+git push origin v0.2.0-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.
@@ -242,4 +321,4 @@ For repos where you use `ocw`, add:
 
 ## Status
 
-`ocw` is alpha software. Read-only modes are low risk. Patch mode should be used in a clean git repo or with `--worktree`.
+`ocw` is alpha software. Read-only modes are low risk. For patch drafts, prefer `--worktree` and `ocw apply latest --check` before applying anything.

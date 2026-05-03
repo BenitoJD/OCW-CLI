@@ -9,12 +9,15 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - `ocw scan "<task>"` for broad or long-context scans.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.
 - `ocw --worktree patch "<task>"` for bounded patch drafts in an isolated git worktree.
+- `ocw apply latest --check` before applying an isolated patch draft.
 
 ## Rules
 
 - Keep worker tasks narrow and explicit.
 - Prefer read-only modes before patch mode.
 - Use `--worktree` for patch drafts in important repositories.
+- Use `ocw show latest --summary` to read the newest worker result.
+- Use `ocw apply latest --check` before applying worker diffs.
 - Read `.codex/opencode-workers/*/summary.md` first.
 - Inspect `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Do not trust worker output blindly.

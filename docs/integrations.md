@@ -25,6 +25,14 @@ ocw doctor
 ocw models
 ```
 
+Bootstrap a project:
+
+```bash
+ocw init
+```
+
+This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal Codex/Claude Code skills. Use `ocw init --no-skills` when you only want project files.
+
 Install the reusable agent skill:
 
 ```bash
@@ -37,6 +45,8 @@ In every project that uses `ocw`, add:
 .codex/opencode-workers/
 .codex/opencode-worktrees/
 ```
+
+`ocw init` handles those entries automatically.
 
 ## Reusable Skill
 
@@ -76,6 +86,18 @@ OCW_CLAUDE_SKILLS_DIR=/path/to/claude/skills ./scripts/install-skills.sh claude
 
 After installation, ask your agent to use the `opencode-worker` skill when it should delegate cheap worker tasks through OpenCode Go.
 
+Claude Code can also use the plugin package in:
+
+```text
+plugins/claude/ocw
+```
+
+For local plugin testing:
+
+```bash
+claude --plugin-dir plugins/claude/ocw
+```
+
 Codex prompt:
 
 ```text
@@ -107,7 +129,7 @@ Use ocw explore to inspect the auth flow. Read the worker summary, then inspect 
 For patch drafts:
 
 ```text
-Use ocw --worktree patch to draft the smallest safe fix. Then read summary.md and diff.after.patch, review the patch yourself, and only keep the parts that are correct.
+Use ocw --worktree patch to draft the smallest safe fix. Then run ocw apply latest --check, read summary.md and diff.after.patch, review the patch yourself, and only apply the parts that are correct.
 ```
 
 ### Project Instructions
@@ -130,6 +152,7 @@ For a reusable Codex skill instead of per-project instructions:
 
 - Prefer `ocw explore`, `ocw cheap`, `ocw scan`, and `ocw review` before `ocw patch`.
 - Use `ocw --worktree patch` for important repos.
+- Use `ocw apply latest --check` before applying an isolated worker patch.
 - Read `.codex/opencode-workers/*/summary.md` before reading raw JSONL.
 - Read `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Codex remains responsible for final edits, tests, and the user-facing answer.
@@ -147,7 +170,7 @@ Use ocw scan to map this repo area cheaply. Read summary.md and then continue wi
 For patch drafts:
 
 ```text
-Use ocw --worktree patch to draft this change. Do not trust the patch blindly; inspect diff.after.patch, decide what to keep, and run tests.
+Use ocw --worktree patch to draft this change. Run ocw apply latest --check, inspect diff.after.patch, decide what to keep, and run tests.
 ```
 
 ### Project Instructions
@@ -173,6 +196,7 @@ For a reusable Claude Code skill instead of per-project instructions:
 - Use `ocw scan` for broad or long-context scans.
 - Use `ocw review` for a stronger second opinion on diffs.
 - Use `ocw --worktree patch` for implementation drafts.
+- Use `ocw apply latest --check` before applying worker patches.
 - Never commit `.codex/opencode-workers/` or `.codex/opencode-worktrees/`.
 
 ## Mode Cheat Sheet
@@ -183,6 +207,8 @@ ocw explore "Find where auth errors are handled"
 ocw scan "Map the billing flow across the repo"
 ocw review "Review the current diff for regressions"
 ocw --worktree patch "Draft the smallest safe validation fix"
+ocw apply latest --check
+ocw apply latest
 ```
 
 Default models:
@@ -212,3 +238,66 @@ sed -n '1,220p' .codex/opencode-workers/*-patch/diff.after.patch
 ```
 
 Apply only the parts you trust.
+
+## Artifact Commands
+
+```bash
+ocw last
+ocw last patch
+ocw show latest --summary
+ocw show latest --diff
+ocw show latest --metadata
+ocw clean --days 14 --dry-run
+ocw clean --days 14 --yes
+```
+
+`ocw clean` prints candidates by default. It removes runs only when `--yes` is present.
+
+## Project Config
+
+`.ocw.toml` supports the routing knobs teams usually need:
+
+```toml
+[models]
+cheap = "opencode-go/qwen3.5-plus"
+explore = "opencode-go/deepseek-v4-flash"
+scan = "opencode-go/mimo-v2.5"
+review = "opencode-go/deepseek-v4-pro"
+patch = "opencode-go/kimi-k2.6"
+
+[agents]
+cheap = "plan"
+explore = "plan"
+scan = "plan"
+review = "plan"
+patch = "build"
+
+[defaults]
+output_root = ".codex/opencode-workers"
+worktree = true
+rm_worktree = false
+require_clean = false
+auto_approve = false
+# attach = "http://localhost:4096"
+```
+
+Precedence is: CLI flags, environment variables, `.ocw.toml`, built-in defaults.
+
+## OpenCode Server
+
+OpenCode supports a warm backend with `opencode serve` and `opencode run --attach`. `ocw` exposes both:
+
+```bash
+ocw serve --port 4096
+ocw --attach http://localhost:4096 scan "Map this repo area"
+```
+
+Use this when repeated worker calls are paying cold-start cost for MCP servers or provider setup.
+
+## Cost Stats
+
+OpenCode exposes token and cost statistics. `ocw` passes that through:
+
+```bash
+ocw stats --days 7 --models 10
+```
