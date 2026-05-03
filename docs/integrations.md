@@ -362,12 +362,38 @@ It exposes these structured tools:
 ocw_run
 ocw_last
 ocw_show
+ocw_manifest
+ocw_audit
 ocw_apply_check
 ocw_apply
 ocw_stats
 ```
 
-The tools accept structured arguments such as `cwd`, `output_root`, `mode`, `task`, `ref`, and `view`, then return text plus structured command status, stdout, stderr, and artifact paths.
+The tools accept structured arguments such as `cwd`, `output_root`, `mode`, `task`, `ref`, and `view`, then return text plus structured command status, stdout, stderr, and artifact paths. Use `ocw_manifest` to inventory artifacts and checksums, and `ocw_audit` before trusting worker output or applying patches.
+
+Print client-specific setup snippets:
+
+```bash
+ocw mcp-config codex
+ocw mcp-config claude
+ocw mcp-config opencode
+```
+
+Codex CLI:
+
+```bash
+codex mcp add ocw -- ocw mcp
+```
+
+Codex `config.toml`:
+
+```toml
+[mcp_servers.ocw]
+command = "ocw"
+args = ["mcp"]
+startup_timeout_sec = 10
+tool_timeout_sec = 300
+```
 
 Claude Code:
 

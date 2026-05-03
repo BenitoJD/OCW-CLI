@@ -118,12 +118,14 @@ When OCW is available as an MCP server, prefer the structured tools over shell s
 ocw_run
 ocw_last
 ocw_show
+ocw_manifest
+ocw_audit
 ocw_apply_check
 ocw_apply
 ocw_stats
 ```
 
-Use `ocw_run` for worker delegation, `ocw_show` for saved artifacts, `ocw_apply_check` before `ocw_apply`, and `ocw_stats` for OpenCode usage statistics.
+Use `ocw_run` for worker delegation, `ocw_show` for saved artifacts, `ocw_manifest` for artifact inventory and checksums, `ocw_audit` before trusting worker output, `ocw_apply_check` before `ocw_apply`, and `ocw_stats` for OpenCode usage statistics.
 
 The server is started with:
 
@@ -131,9 +133,18 @@ The server is started with:
 ocw mcp
 ```
 
+Print setup snippets for clients with:
+
+```bash
+ocw mcp-config codex
+ocw mcp-config claude
+ocw mcp-config opencode
+```
+
 ## Safety Rules
 
 - Use `ocw --worktree patch` for important repositories.
+- Use `ocw audit latest` before applying or copying any worker patch.
 - Use `ocw apply latest --check` before applying any worker patch.
 - When using MCP, call `ocw_apply_check` before `ocw_apply`.
 - Use `ocw --require-clean patch` only when direct edits are acceptable and the tree should be clean first.

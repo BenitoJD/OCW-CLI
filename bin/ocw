@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.5.0-alpha"
+VERSION="0.6.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
@@ -35,6 +35,8 @@ Usage:
   ocw init [options]
   ocw last [mode]
   ocw show [latest|run-dir] [--summary|--diff|--stat|--status|--metadata|--jsonl|--path]
+  ocw manifest [latest|run-dir] [--json]
+  ocw audit [latest|run-dir] [--json] [--max-diff-bytes N]
   ocw apply [latest|run-dir] [--check] [--allow-dirty] [--force]
   ocw clean (--days N|--all) [--dry-run] [--yes]
   ocw stats [opencode-stats-options...]
@@ -46,6 +48,8 @@ Usage:
   ocw batch TASK_FILE [--concurrency N] [--worktree-patches] [--rm-worktree]
   ocw pr review PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
   ocw pr summary PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
+  ocw mcp-config [codex|claude|opencode|all]
+  ocw completions [bash|zsh|fish]
   ocw mcp
   ocw version
 
@@ -89,6 +93,11 @@ Output:
     diff.after.stat
     status.after.txt
   metadata.txt
+
+Audit:
+  ocw manifest latest --json
+  ocw audit latest --json
+  ocw audit latest --max-diff-bytes 200000
 
 PR output:
   .codex/opencode-workers/<timestamp>-pr-review/
@@ -389,6 +398,38 @@ metadata_value() {
   local key="$2"
   [[ -f "$file" ]] || return 0
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print }' "$file" | tail -n 1
+}
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\t'/\\t}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+json_string() {
+  printf '"%s"' "$(json_escape "$1")"
+}
+
+file_size_bytes() {
+  local file="$1"
+
+  stat -f '%z' "$file" 2>/dev/null || stat -c '%s' "$file" 2>/dev/null || wc -c < "$file" | tr -d ' '
+}
+
+file_sha256() {
+  local file="$1"
+
+  if have_command shasum; then
+    shasum -a 256 "$file" | awk '{ print $1 }'
+  elif have_command sha256sum; then
+    sha256sum "$file" | awk '{ print $1 }'
+  else
+    printf ''
+  fi
 }
 
 latest_run_dir() {
@@ -827,6 +868,396 @@ show_command() {
       die "unknown show view: $view"
       ;;
   esac
+}
+
+manifest_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local json=0
+  local run_dir metadata_file artifact first line key value file rel bytes sha
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        json=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw manifest [latest|run-dir] [--json]\n'
+        return
+        ;;
+      -*)
+        die "unknown manifest option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  root="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root" "$ref")"
+  metadata_file="$run_dir/metadata.txt"
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.manifest.v1",\n'
+    printf '  "run_dir": '
+    json_string "$run_dir"
+    printf ',\n'
+    printf '  "metadata": {\n'
+    first=1
+    if [[ -f "$metadata_file" ]]; then
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        [[ -n "$key" ]] || continue
+        if [[ "$first" -eq 0 ]]; then
+          printf ',\n'
+        fi
+        printf '    '
+        json_string "$key"
+        printf ': '
+        json_string "$value"
+        first=0
+      done < "$metadata_file"
+    fi
+    printf '\n  },\n'
+    printf '  "artifacts": [\n'
+    first=1
+    while IFS= read -r file; do
+      [[ -n "$file" ]] || continue
+      rel="${file#"$run_dir"/}"
+      bytes="$(file_size_bytes "$file")"
+      sha="$(file_sha256 "$file")"
+      if [[ "$first" -eq 0 ]]; then
+        printf ',\n'
+      fi
+      printf '    { "name": '
+      json_string "$rel"
+      printf ', "path": '
+      json_string "$file"
+      printf ', "bytes": %s, "sha256": ' "$bytes"
+      json_string "$sha"
+      printf ' }'
+      first=0
+    done <<EOF
+$(find "$run_dir" -type f -print | sort)
+EOF
+    printf '\n  ]\n'
+    printf '}\n'
+    return
+  fi
+
+  printf 'OCW manifest: %s\n' "$run_dir"
+  if [[ -f "$metadata_file" ]]; then
+    printf '\nmetadata:\n'
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" == *=* ]] || continue
+      key="${line%%=*}"
+      value="${line#*=}"
+      printf '  %s: %s\n' "$key" "$value"
+    done < "$metadata_file"
+  else
+    printf '\nmetadata: missing\n'
+  fi
+
+  printf '\nartifacts:\n'
+  while IFS= read -r artifact; do
+    [[ -n "$artifact" ]] || continue
+    rel="${artifact#"$run_dir"/}"
+    bytes="$(file_size_bytes "$artifact")"
+    sha="$(file_sha256 "$artifact")"
+    printf '  - %s (%s bytes' "$rel" "$bytes"
+    if [[ -n "$sha" ]]; then
+      printf ', sha256:%s' "$sha"
+    fi
+    printf ')\n'
+  done <<EOF
+$(find "$run_dir" -type f -print | sort)
+EOF
+}
+
+status_has_unexpected_changes() {
+  local status_file="$1"
+  local project_dir="$2"
+  local output_dir="$3"
+  local output_rel=""
+  local line path
+
+  [[ -s "$status_file" ]] || return 1
+
+  if [[ -n "$project_dir" && -n "$output_dir" && "$output_dir" == "$project_dir/"* ]]; then
+    output_rel="${output_dir#"$project_dir"/}"
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    path="${line:3}"
+    case "$path" in
+      .codex|.codex/|.codex/*|.out|.out/|.out/*)
+        continue
+        ;;
+    esac
+    if [[ -n "$output_rel" ]]; then
+      case "$path" in
+        "$output_rel"|"$output_rel"/|"$output_rel"/*)
+          continue
+          ;;
+      esac
+    fi
+    return 0
+  done < "$status_file"
+
+  return 1
+}
+
+audit_add() {
+  local severity="$1"
+  local id="$2"
+  local message="$3"
+  printf '%s\t%s\t%s\n' "$severity" "$id" "$message" >> "$audit_checks_file"
+}
+
+audit_tsv_status_failures() {
+  local file="$1"
+  local column="$2"
+  awk -F '\t' -v col="$column" 'NR > 1 && $col != "0" { found = 1 } END { exit(found ? 0 : 1) }' "$file"
+}
+
+audit_tsv_marker_warnings() {
+  local file="$1"
+  local column="$2"
+  awk -F '\t' -v col="$column" 'NR > 1 && $col != "ok" { found = 1 } END { exit(found ? 0 : 1) }' "$file"
+}
+
+audit_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local json=0
+  local max_diff_bytes=200000
+  local run_dir metadata_file mode status output_dir project_dir worktree diff_size overall exit_code
+  local summary_file report_file first severity id message
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        json=1
+        shift
+        ;;
+      --max-diff-bytes)
+        [[ $# -ge 2 ]] || die "--max-diff-bytes requires a value"
+        max_diff_bytes="$2"
+        shift 2
+        ;;
+      -h|--help)
+        printf 'Usage: ocw audit [latest|run-dir] [--json] [--max-diff-bytes N]\n'
+        return
+        ;;
+      -*)
+        die "unknown audit option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ "$max_diff_bytes" =~ ^[0-9]+$ ]] || die "--max-diff-bytes must be a non-negative integer"
+  root="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root" "$ref")"
+  metadata_file="$run_dir/metadata.txt"
+  audit_checks_file="$(mktemp "${TMPDIR:-/tmp}/ocw-audit.XXXXXX")"
+
+  if [[ -f "$metadata_file" ]]; then
+    audit_add ok metadata "metadata.txt exists"
+  else
+    audit_add fail metadata "metadata.txt is missing"
+  fi
+
+  mode="$(metadata_value "$metadata_file" "mode")"
+  status="$(metadata_value "$metadata_file" "status")"
+  output_dir="$(metadata_value "$metadata_file" "output_dir")"
+  project_dir="$(metadata_value "$metadata_file" "project_dir")"
+  worktree="$(metadata_value "$metadata_file" "worktree")"
+
+  if [[ -n "$mode" ]]; then
+    audit_add ok mode "mode=$mode"
+  else
+    audit_add warn mode "mode is missing from metadata"
+  fi
+
+  if [[ -n "$status" ]]; then
+    if [[ "$status" == "0" ]]; then
+      audit_add ok status "worker exited 0"
+    else
+      audit_add fail status "worker exited $status"
+    fi
+  elif [[ "$mode" == "bench" || "$mode" == "batch" ]]; then
+    audit_add ok status "aggregate command uses TSV status rows"
+  elif [[ -n "$mode" ]]; then
+    audit_add warn status "status is missing from metadata"
+  fi
+
+  case "$mode" in
+    cheap|explore|scan|review|patch)
+      summary_file="$run_dir/summary.md"
+      if [[ -s "$summary_file" ]]; then
+        audit_add ok summary "summary.md is present"
+      else
+        audit_add fail summary "summary.md is missing or empty"
+      fi
+      if [[ -s "$run_dir/result.jsonl" ]]; then
+        audit_add ok result "result.jsonl is present"
+      else
+        audit_add warn result "result.jsonl is missing or empty"
+      fi
+      if [[ "$mode" == "patch" ]]; then
+        if [[ "$worktree" == "1" ]]; then
+          audit_add ok patch_isolation "patch ran in an isolated worktree"
+        else
+          audit_add warn patch_isolation "patch did not run in an isolated worktree"
+        fi
+      elif status_has_unexpected_changes "$run_dir/status.after.txt" "$project_dir" "$output_dir"; then
+        audit_add warn readonly_changes "read-only mode left unexpected git status changes"
+      else
+        audit_add ok readonly_changes "no unexpected git status changes"
+      fi
+      ;;
+    pr-summary|pr-review)
+      if [[ -s "$run_dir/pr.diff.patch" ]]; then
+        audit_add ok pr_diff "pr.diff.patch is present"
+      else
+        audit_add fail pr_diff "pr.diff.patch is missing or empty"
+      fi
+      report_file="$run_dir/summary.md"
+      [[ "$mode" == "pr-review" ]] && report_file="$run_dir/review.md"
+      if [[ -s "$report_file" ]]; then
+        audit_add ok pr_report "$(basename "$report_file") is present"
+      else
+        audit_add fail pr_report "$(basename "$report_file") is missing or empty"
+      fi
+      if [[ -s "$run_dir/workers.tsv" ]]; then
+        if audit_tsv_status_failures "$run_dir/workers.tsv" 2; then
+          audit_add fail pr_workers "one or more PR workers failed"
+        else
+          audit_add ok pr_workers "all PR workers exited 0"
+        fi
+      else
+        audit_add fail pr_workers "workers.tsv is missing or empty"
+      fi
+      ;;
+    bench)
+      if [[ -s "$run_dir/bench.tsv" ]]; then
+        if audit_tsv_status_failures "$run_dir/bench.tsv" 3; then
+          audit_add fail bench_status "one or more benchmark runs failed"
+        else
+          audit_add ok bench_status "all benchmark runs exited 0"
+        fi
+        if audit_tsv_marker_warnings "$run_dir/bench.tsv" 5; then
+          audit_add warn bench_marker "one or more benchmark markers are missing"
+        else
+          audit_add ok bench_marker "all benchmark markers are present"
+        fi
+      else
+        audit_add fail bench_status "bench.tsv is missing or empty"
+      fi
+      if [[ -s "$run_dir/bench.md" ]]; then
+        audit_add ok bench_report "bench.md is present"
+      else
+        audit_add fail bench_report "bench.md is missing or empty"
+      fi
+      ;;
+    batch)
+      if [[ -s "$run_dir/batch.tsv" ]]; then
+        if audit_tsv_status_failures "$run_dir/batch.tsv" 3; then
+          audit_add fail batch_status "one or more batch workers failed"
+        else
+          audit_add ok batch_status "all batch workers exited 0"
+        fi
+      else
+        audit_add fail batch_status "batch.tsv is missing or empty"
+      fi
+      ;;
+    "")
+      ;;
+    *)
+      audit_add warn mode "unknown mode for specialized audit checks: $mode"
+      ;;
+  esac
+
+  if [[ -f "$run_dir/diff.after.patch" ]]; then
+    diff_size="$(file_size_bytes "$run_dir/diff.after.patch")"
+    if [[ "$diff_size" -gt "$max_diff_bytes" ]]; then
+      audit_add warn diff_size "diff.after.patch is $diff_size bytes, above $max_diff_bytes"
+    else
+      audit_add ok diff_size "diff.after.patch is $diff_size bytes"
+    fi
+  fi
+
+  if find "$run_dir" \( -name summary.md -o -name review.md \) -type f -print0 2>/dev/null \
+    | xargs -0 grep -Eiq 'ignore (all )?(previous|prior) instructions|system prompt|developer message|exfiltrat|api[_ -]?key|secret token' 2>/dev/null; then
+    audit_add warn injection_markers "worker summaries contain prompt-injection or secret-handling markers"
+  else
+    audit_add ok injection_markers "no obvious prompt-injection markers in worker summaries"
+  fi
+
+  overall="ok"
+  if awk -F '\t' '$1 == "fail" { found = 1 } END { exit(found ? 0 : 1) }' "$audit_checks_file"; then
+    overall="fail"
+  elif awk -F '\t' '$1 == "warn" { found = 1 } END { exit(found ? 0 : 1) }' "$audit_checks_file"; then
+    overall="warn"
+  fi
+
+  if [[ "$overall" == "fail" ]]; then
+    exit_code=1
+  else
+    exit_code=0
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.audit.v1",\n'
+    printf '  "run_dir": '
+    json_string "$run_dir"
+    printf ',\n'
+    printf '  "overall": '
+    json_string "$overall"
+    printf ',\n'
+    printf '  "checks": [\n'
+    first=1
+    while IFS=$'\t' read -r severity id message; do
+      [[ -n "$severity" ]] || continue
+      if [[ "$first" -eq 0 ]]; then
+        printf ',\n'
+      fi
+      printf '    { "severity": '
+      json_string "$severity"
+      printf ', "id": '
+      json_string "$id"
+      printf ', "message": '
+      json_string "$message"
+      printf ' }'
+      first=0
+    done < "$audit_checks_file"
+    printf '\n  ]\n'
+    printf '}\n'
+  else
+    printf 'OCW audit: %s\n' "$run_dir"
+    printf 'overall: %s\n\n' "$overall"
+    while IFS=$'\t' read -r severity id message; do
+      [[ -n "$severity" ]] || continue
+      printf '[%s] %s: %s\n' "$severity" "$id" "$message"
+    done < "$audit_checks_file"
+  fi
+
+  rm -f "$audit_checks_file"
+  return "$exit_code"
 }
 
 apply_command() {
@@ -1729,6 +2160,157 @@ Return the highest-signal risks and the exact tests or checks the primary agent 
   return "$status"
 }
 
+mcp_config_command() {
+  local target="${1:-all}"
+
+  case "$target" in
+    codex)
+      cat <<'EOF'
+# Codex CLI
+codex mcp add ocw -- ocw mcp
+
+# Or add this to ~/.codex/config.toml or project .codex/config.toml:
+[mcp_servers.ocw]
+command = "ocw"
+args = ["mcp"]
+startup_timeout_sec = 10
+tool_timeout_sec = 300
+EOF
+      ;;
+    claude)
+      cat <<'EOF'
+# Claude Code
+claude mcp add --transport stdio ocw -- ocw mcp
+
+# Project-scoped .mcp.json:
+{
+  "mcpServers": {
+    "ocw": {
+      "command": "ocw",
+      "args": ["mcp"]
+    }
+  }
+}
+EOF
+      ;;
+    opencode)
+      cat <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ocw": {
+      "type": "local",
+      "command": ["ocw", "mcp"],
+      "enabled": true
+    }
+  }
+}
+EOF
+      ;;
+    all)
+      mcp_config_command codex
+      printf '\n'
+      mcp_config_command claude
+      printf '\n# OpenCode opencode.json\n'
+      mcp_config_command opencode
+      ;;
+    -h|--help|help)
+      printf 'Usage: ocw mcp-config [codex|claude|opencode|all]\n'
+      ;;
+    *)
+      die "unknown mcp-config target: $target"
+      ;;
+  esac
+}
+
+completions_command() {
+  local shell="${1:-}"
+
+  case "$shell" in
+    bash)
+      cat <<'EOF'
+_ocw()
+{
+  local cur prev commands modes
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  commands="init last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+  modes="cheap explore scan review patch"
+
+  case "$prev" in
+    ocw)
+      COMPREPLY=( $(compgen -W "$commands $modes" -- "$cur") )
+      return 0
+      ;;
+    mcp-config)
+      COMPREPLY=( $(compgen -W "codex claude opencode all" -- "$cur") )
+      return 0
+      ;;
+    completions)
+      COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+      return 0
+      ;;
+    pr)
+      COMPREPLY=( $(compgen -W "summary review" -- "$cur") )
+      return 0
+      ;;
+  esac
+}
+complete -F _ocw ocw
+EOF
+      ;;
+    zsh)
+      cat <<'EOF'
+#compdef ocw
+
+_ocw() {
+  local -a commands modes
+  commands=(
+    init last show manifest audit apply clean stats serve doctor models
+    agent-pack bench batch pr mcp-config completions mcp version
+  )
+  modes=(cheap explore scan review patch)
+
+  _arguments \
+    '1:command:->command' \
+    '*::arg:->arg'
+
+  case $state in
+    command)
+      _describe 'command' commands
+      _describe 'mode' modes
+      ;;
+    arg)
+      case ${words[2]} in
+        mcp-config) _values 'target' codex claude opencode all ;;
+        completions) _values 'shell' bash zsh fish ;;
+        pr) _values 'action' summary review ;;
+      esac
+      ;;
+  esac
+}
+
+_ocw "$@"
+EOF
+      ;;
+    fish)
+      cat <<'EOF'
+complete -c ocw -f -a "cheap explore scan review patch init last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
+complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
+complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
+EOF
+      ;;
+    -h|--help|help|"")
+      printf 'Usage: ocw completions [bash|zsh|fish]\n'
+      ;;
+    *)
+      die "unknown completion shell: $shell"
+      ;;
+  esac
+}
+
 stats_command() {
   require_command "$OPENCODE_BIN"
   "$OPENCODE_BIN" stats "$@"
@@ -1781,6 +2363,16 @@ case "$1" in
     show_command "$out_base" "$@"
     exit 0
     ;;
+  manifest)
+    shift
+    manifest_command "$out_base" "$@"
+    exit 0
+    ;;
+  audit)
+    shift
+    audit_command "$out_base" "$@"
+    exit $?
+    ;;
   apply)
     shift
     apply_command "$out_base" "$@"
@@ -1820,6 +2412,16 @@ case "$1" in
     shift
     pr_command "$out_base" "$@"
     exit $?
+    ;;
+  mcp-config)
+    shift
+    mcp_config_command "$@"
+    exit 0
+    ;;
+  completions)
+    shift
+    completions_command "$@"
+    exit 0
     ;;
   mcp)
     shift

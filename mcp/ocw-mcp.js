@@ -89,6 +89,32 @@ const tools = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: 'ocw_manifest',
+    description: 'Return a machine-readable manifest for a saved OCW run, including metadata and artifact checksums.',
+    inputSchema: schema({
+      ...commonProperties,
+      ref: { type: 'string', description: 'Run directory, run basename, or latest. Defaults to latest.' },
+      json: { type: 'boolean', description: 'Return JSON output. Defaults to true.' },
+    }),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'ocw_audit',
+    description: 'Audit a saved OCW run for failed workers, missing artifacts, unsafe patch isolation, large diffs, and prompt-injection markers.',
+    inputSchema: schema({
+      ...commonProperties,
+      ref: { type: 'string', description: 'Run directory, run basename, or latest. Defaults to latest.' },
+      json: { type: 'boolean', description: 'Return JSON output. Defaults to true.' },
+      max_diff_bytes: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 100000000,
+        description: 'Warn when diff.after.patch is larger than this many bytes. Defaults to OCW CLI default.',
+      },
+    }),
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: 'ocw_apply_check',
     description: 'Run `ocw apply --check` for a saved patch artifact. Does not modify files.',
     inputSchema: schema({
@@ -318,6 +344,28 @@ function callTool(name, args) {
     }
     const ocwArgs = ['show', ref];
     if (viewFlags[view]) ocwArgs.push(viewFlags[view]);
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_manifest') {
+    const ref = assertString(input.ref, 'ref') || 'latest';
+    const ocwArgs = ['manifest', ref];
+    if (input.json !== false) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_audit') {
+    const ref = assertString(input.ref, 'ref') || 'latest';
+    const ocwArgs = ['audit', ref];
+    if (input.json !== false) ocwArgs.push('--json');
+    if (input.max_diff_bytes !== undefined && input.max_diff_bytes !== null) {
+      if (!Number.isInteger(input.max_diff_bytes) || input.max_diff_bytes < 0 || input.max_diff_bytes > 100000000) {
+        throw new Error('max_diff_bytes must be an integer between 0 and 100000000');
+      }
+      ocwArgs.push('--max-diff-bytes', String(input.max_diff_bytes));
+    }
     result = runOcw(ocwArgs, input);
     return toolResponse(name, result);
   }

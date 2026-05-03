@@ -88,7 +88,7 @@ test_help_and_doctor() {
   local output
   "$OCW" --help >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.5.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.6.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -304,6 +304,71 @@ test_last_show_clean() {
   assert_not_dir ".out/b-review"
 }
 
+test_manifest_audit_and_cli_helpers() {
+  local repo="$TMP_ROOT/audit"
+  local manifest audit_output audit_json completion config fail_status
+  make_repo "$repo"
+  cd "$repo"
+
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_OUTPUT_ROOT=".out" \
+    OCW_MOCK_LOG="$PWD/.out/mock.log" \
+    OCW_TEST_CREATED_AT="2026-01-01T00:00:00Z" \
+    OCW_TEST_STAMP="audit-ok" \
+    "$OCW" cheap "audit ok" >/dev/null
+
+  manifest="$TMP_ROOT/manifest.json"
+  OCW_OUTPUT_ROOT=".out" "$OCW" manifest latest --json > "$manifest"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$manifest"
+  assert_contains "$manifest" '"schema_version": "ocw.manifest.v1"'
+  assert_contains "$manifest" '"summary.md"'
+  assert_contains "$manifest" '"sha256"'
+
+  audit_output="$TMP_ROOT/audit.txt"
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
+  assert_contains "$audit_output" "overall: ok"
+  assert_contains "$audit_output" "summary.md is present"
+
+  completion="$TMP_ROOT/completion.txt"
+  "$OCW" completions bash > "$completion"
+  assert_contains "$completion" "_ocw()"
+  assert_contains "$completion" "manifest audit"
+  "$OCW" completions zsh > "$completion"
+  assert_contains "$completion" "#compdef ocw"
+  "$OCW" completions fish > "$completion"
+  assert_contains "$completion" "complete -c ocw"
+
+  config="$TMP_ROOT/mcp-config.txt"
+  "$OCW" mcp-config codex > "$config"
+  assert_contains "$config" "codex mcp add ocw -- ocw mcp"
+  assert_contains "$config" "[mcp_servers.ocw]"
+  "$OCW" mcp-config claude > "$config"
+  assert_contains "$config" "claude mcp add --transport stdio ocw -- ocw mcp"
+  "$OCW" mcp-config opencode > "$config"
+  assert_contains "$config" '"command": ["ocw", "mcp"]'
+
+  set +e
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_OUTPUT_ROOT=".out" \
+    OCW_MOCK_LOG="$PWD/.out/mock.log" \
+    OCW_TEST_CREATED_AT="2026-01-01T00:00:00Z" \
+    OCW_TEST_STAMP="audit-fail" \
+    "$OCW" cheap "OCW_MOCK_FAIL" >/dev/null
+  fail_status=$?
+  set -e
+  [[ "$fail_status" -eq 7 ]] || fail "expected worker failure 7, got $fail_status"
+
+  audit_json="$TMP_ROOT/audit-fail.json"
+  set +e
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit audit-fail-cheap --json > "$audit_json"
+  fail_status=$?
+  set -e
+  [[ "$fail_status" -eq 1 ]] || fail "expected audit failure 1, got $fail_status"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$audit_json"
+  assert_contains "$audit_json" '"overall": "fail"'
+  assert_contains "$audit_json" '"worker exited 7"'
+}
+
 test_apply_worktree_patch() {
   local repo="$TMP_ROOT/apply"
   local check_output apply_output
@@ -492,6 +557,7 @@ run_test "worktree patch isolation" test_worktree_patch_isolation
 run_test "require clean" test_require_clean
 run_test "init project" test_init_project
 run_test "last show clean" test_last_show_clean
+run_test "manifest audit and cli helpers" test_manifest_audit_and_cli_helpers
 run_test "apply worktree patch" test_apply_worktree_patch
 run_test "stats and serve" test_stats_and_serve
 run_test "skill assets" test_skill_assets

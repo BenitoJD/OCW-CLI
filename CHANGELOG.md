@@ -2,6 +2,15 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.6.0-alpha
+
+- Add `ocw manifest` for machine-readable run metadata, artifact paths, file sizes, and SHA-256 checksums.
+- Add `ocw audit` as a local safety gate for failed workers, missing artifacts, read-only mode changes, non-isolated patch drafts, large diffs, and obvious prompt-injection markers.
+- Add `ocw mcp-config` for copy-paste Codex, Claude Code, and OpenCode MCP setup snippets.
+- Add `ocw completions` for bash, zsh, and fish shell completion generation.
+- Expose `ocw_manifest` and `ocw_audit` through the MCP server.
+- Expand tests for manifest/audit JSON, client config snippets, shell completions, and the new MCP tools.
+
 ## 0.5.0-alpha
 
 - Add `ocw mcp`, a dependency-free stdio MCP server implemented in Node.js.

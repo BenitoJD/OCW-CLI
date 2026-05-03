@@ -107,7 +107,7 @@ function createClient(repo) {
 
     const listed = await client.request('tools/list', {});
     const names = listed.tools.map((tool) => tool.name).sort();
-    assert.deepEqual(names, ['ocw_apply', 'ocw_apply_check', 'ocw_last', 'ocw_run', 'ocw_show', 'ocw_stats'].sort());
+    assert.deepEqual(names, ['ocw_apply', 'ocw_apply_check', 'ocw_audit', 'ocw_last', 'ocw_manifest', 'ocw_run', 'ocw_show', 'ocw_stats'].sort());
 
     const common = { cwd: repo, output_root: '.out' };
     const runCheap = await client.request('tools/call', {
@@ -135,6 +135,21 @@ function createClient(repo) {
     });
     assert.equal(show.structuredContent.status, 0);
     assert.match(show.structuredContent.stdout, /MOCK_OK/);
+
+    const manifest = await client.request('tools/call', {
+      name: 'ocw_manifest',
+      arguments: { ...common, ref: 'latest' },
+    });
+    assert.equal(manifest.structuredContent.status, 0);
+    assert.match(manifest.structuredContent.stdout, /"schema_version": "ocw\.manifest\.v1"/);
+    assert.match(manifest.structuredContent.stdout, /"summary\.md"/);
+
+    const audit = await client.request('tools/call', {
+      name: 'ocw_audit',
+      arguments: { ...common, ref: 'latest' },
+    });
+    assert.equal(audit.structuredContent.status, 0);
+    assert.match(audit.structuredContent.stdout, /"overall": "ok"/);
 
     const patch = await client.request('tools/call', {
       name: 'ocw_run',
