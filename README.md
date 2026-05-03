@@ -52,6 +52,35 @@ ocw --variant high explore "Map the API flow"
 ocw --file ./notes.md review "Review this plan"
 ```
 
+## Agent Integrations
+
+`ocw` works with any coding agent that can run shell commands.
+
+Codex quick start:
+
+```text
+Use ocw explore to inspect the auth flow. Read the worker summary, then inspect only the files you think matter before deciding what to change.
+```
+
+Claude Code quick start:
+
+```text
+Use ocw scan to map this repo area cheaply. Read summary.md and then continue with your own focused inspection.
+```
+
+For copy-paste project instructions:
+
+```text
+examples/codex/AGENTS.md
+examples/claude/CLAUDE.md
+```
+
+Full guide:
+
+```text
+docs/integrations.md
+```
+
 ## Output
 
 Each run writes to:

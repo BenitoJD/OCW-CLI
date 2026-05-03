@@ -11,3 +11,4 @@ All notable changes to `ocw` are documented here.
 - Add model, agent, variant, attachment, and auto-approve overrides.
 - Add `doctor`, `models`, and `version` commands.
 - Add deterministic mocked tests and release packaging.
+- Add Codex and Claude Code integration docs and project instruction templates.
