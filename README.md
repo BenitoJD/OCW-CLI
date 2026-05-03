@@ -4,6 +4,22 @@
 
 The idea is simple: keep Codex as the orchestrator and final reviewer, while using cheaper OpenCode Go models for bounded worker tasks like repo exploration, broad scans, review passes, and patch drafts.
 
+## About
+
+`ocw` is for developers who want to reduce expensive agent usage without giving up the judgment of their primary coding agent.
+
+It does not replace Codex, Claude Code, or another orchestrator. Instead, it gives those agents a small shell tool for delegating narrow tasks to OpenCode Go workers, then saves the result as summaries, metadata, status snapshots, and diffs that the primary agent can inspect.
+
+Use it when you want:
+
+- cheap first-pass codebase exploration
+- broad or long-context scans
+- a second review pass on a diff
+- bounded patch drafts in an isolated worktree
+- repeatable worker artifacts that are easy for another agent to read
+
+The safety model is intentionally conservative: worker output is draft labor. Your main agent, your tests, and your code review remain the final authority.
+
 ## Install
 
 ```bash

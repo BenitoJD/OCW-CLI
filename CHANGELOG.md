@@ -12,3 +12,4 @@ All notable changes to `ocw` are documented here.
 - Add `doctor`, `models`, and `version` commands.
 - Add deterministic mocked tests and release packaging.
 - Add Codex and Claude Code integration docs and project instruction templates.
+- Add README About section for GitHub project positioning.
