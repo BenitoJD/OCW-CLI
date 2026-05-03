@@ -72,6 +72,14 @@ ocw --file ./notes.md review "Review this plan"
 
 `ocw` works with any coding agent that can run shell commands.
 
+Install the reusable agent skill for Codex and Claude Code:
+
+```bash
+./scripts/install-skills.sh both
+```
+
+Then ask Codex to use the `opencode-worker` skill, or invoke `/opencode-worker` in Claude Code.
+
 Codex quick start:
 
 ```text
@@ -89,6 +97,12 @@ For copy-paste project instructions:
 ```text
 examples/codex/AGENTS.md
 examples/claude/CLAUDE.md
+```
+
+For reusable skills:
+
+```text
+skills/opencode-worker/SKILL.md
 ```
 
 Full guide:
@@ -184,7 +198,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, and isolated `--worktree` patch mode.
+The tests cover model routing, overrides, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, and Codex/Claude Code skill installation.
 
 Run the full local quality gate:
 

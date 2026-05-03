@@ -25,11 +25,67 @@ ocw doctor
 ocw models
 ```
 
+Install the reusable agent skill:
+
+```bash
+./scripts/install-skills.sh both
+```
+
 In every project that uses `ocw`, add:
 
 ```gitignore
 .codex/opencode-workers/
 .codex/opencode-worktrees/
+```
+
+## Reusable Skill
+
+`skills/opencode-worker/SKILL.md` is a shared Agent Skill for Codex and Claude Code. It teaches the orchestrator when to call `ocw`, which mode to choose, and how to inspect worker artifacts safely.
+
+Install for Codex:
+
+```bash
+./scripts/install-skills.sh codex
+```
+
+Install for Claude Code:
+
+```bash
+./scripts/install-skills.sh claude
+```
+
+Install for both:
+
+```bash
+./scripts/install-skills.sh both
+```
+
+The installer copies the same skill to:
+
+```text
+~/.codex/skills/opencode-worker/SKILL.md
+~/.claude/skills/opencode-worker/SKILL.md
+```
+
+You can override the target directories:
+
+```bash
+OCW_CODEX_SKILLS_DIR=/path/to/codex/skills ./scripts/install-skills.sh codex
+OCW_CLAUDE_SKILLS_DIR=/path/to/claude/skills ./scripts/install-skills.sh claude
+```
+
+After installation, ask your agent to use the `opencode-worker` skill when it should delegate cheap worker tasks through OpenCode Go.
+
+Codex prompt:
+
+```text
+Use the opencode-worker skill to run ocw explore for this repo area, then inspect the worker summary before deciding what to edit.
+```
+
+Claude Code direct invocation:
+
+```text
+/opencode-worker Run ocw scan for this repo area, then inspect summary.md before continuing.
 ```
 
 ## Codex
@@ -64,6 +120,12 @@ examples/codex/AGENTS.md
 
 If it does not, paste the same rules into your Codex project/profile instructions.
 
+For a reusable Codex skill instead of per-project instructions:
+
+```bash
+./scripts/install-skills.sh codex
+```
+
 ### Recommended Codex Rules
 
 - Prefer `ocw explore`, `ocw cheap`, `ocw scan`, and `ocw review` before `ocw patch`.
@@ -97,6 +159,12 @@ examples/claude/CLAUDE.md
 ```
 
 into your project `CLAUDE.md`.
+
+For a reusable Claude Code skill instead of per-project instructions:
+
+```bash
+./scripts/install-skills.sh claude
+```
 
 ### Recommended Claude Code Rules
 

@@ -189,6 +189,26 @@ test_require_clean() {
   assert_contains "err.log" "git worktree is not clean"
 }
 
+test_skill_assets() {
+  assert_file "$ROOT/skills/opencode-worker/SKILL.md"
+  assert_contains "$ROOT/skills/opencode-worker/SKILL.md" "name: opencode-worker"
+  assert_contains "$ROOT/skills/opencode-worker/SKILL.md" "description: Use ocw"
+}
+
+test_skill_installer() {
+  local codex_skills="$TMP_ROOT/codex-skills"
+  local claude_skills="$TMP_ROOT/claude-skills"
+
+  OCW_CODEX_SKILLS_DIR="$codex_skills" \
+    OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    "$ROOT/scripts/install-skills.sh" both >/dev/null
+
+  assert_file "$codex_skills/opencode-worker/SKILL.md"
+  assert_file "$claude_skills/opencode-worker/SKILL.md"
+  assert_contains "$codex_skills/opencode-worker/SKILL.md" "name: opencode-worker"
+  assert_contains "$claude_skills/opencode-worker/SKILL.md" "name: opencode-worker"
+}
+
 run_test "help and doctor" test_help_and_doctor
 run_test "default routing" test_default_routing
 run_test "overrides and summary" test_overrides_and_summary
@@ -197,6 +217,8 @@ run_test "exit code capture" test_exit_code_capture
 run_test "output collision" test_output_collision
 run_test "worktree patch isolation" test_worktree_patch_isolation
 run_test "require clean" test_require_clean
+run_test "skill assets" test_skill_assets
+run_test "skill installer" test_skill_installer
 
 say "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

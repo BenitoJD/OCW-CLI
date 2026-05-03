@@ -9,6 +9,7 @@ files=(
   "$ROOT/test/run.sh"
   "$ROOT/test/fixtures/opencode"
   "$ROOT/scripts/lint.sh"
+  "$ROOT/scripts/install-skills.sh"
   "$ROOT/scripts/package.sh"
   "$ROOT/scripts/release-check.sh"
 )
