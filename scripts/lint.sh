@@ -15,9 +15,22 @@ files=(
   "$ROOT/scripts/release-check.sh"
 )
 
+js_files=(
+  "$ROOT/mcp/ocw-mcp.js"
+  "$ROOT/test/mcp-smoke.js"
+)
+
 for file in "${files[@]}"; do
   bash -n "$file"
 done
+
+if command -v node >/dev/null 2>&1; then
+  for file in "${js_files[@]}"; do
+    node --check "$file"
+  done
+else
+  printf 'node not found; skipping MCP JavaScript syntax checks\n' >&2
+fi
 
 if [[ "${OCW_SKIP_SHELLCHECK:-0}" != "1" ]]; then
   if command -v shellcheck >/dev/null 2>&1; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.4.0-alpha"
+VERSION="0.5.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
@@ -46,6 +46,7 @@ Usage:
   ocw batch TASK_FILE [--concurrency N] [--worktree-patches] [--rm-worktree]
   ocw pr review PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
   ocw pr summary PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
+  ocw mcp
   ocw version
 
 Worker options:
@@ -1819,6 +1820,22 @@ case "$1" in
     shift
     pr_command "$out_base" "$@"
     exit $?
+    ;;
+  mcp)
+    shift
+    if [[ $# -gt 0 ]]; then
+      case "$1" in
+        -h|--help|help)
+          printf 'Usage: ocw mcp\n\nStarts the OCW stdio MCP server.\n'
+          exit 0
+          ;;
+        *)
+          die "unknown mcp option: $1"
+          ;;
+      esac
+    fi
+    require_command node
+    exec node "$OCW_HOME/mcp/ocw-mcp.js"
     ;;
   models)
     shift

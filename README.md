@@ -33,6 +33,7 @@ Requirements:
 - `opencode`
 - `git`
 - `gh` for `ocw pr ...`
+- `node` for `ocw mcp`
 - `jq` optional, but recommended for clean `summary.md` extraction
 
 Check your setup:
@@ -148,6 +149,44 @@ Pass through OpenCode cost and server commands:
 ocw stats --days 7 --models 10
 ocw serve --port 4096
 ocw --attach http://localhost:4096 cheap "Use the warm backend"
+```
+
+Start the MCP server:
+
+```bash
+ocw mcp
+```
+
+It exposes structured tools for clients that support local stdio MCP:
+
+```text
+ocw_run
+ocw_last
+ocw_show
+ocw_apply_check
+ocw_apply
+ocw_stats
+```
+
+Claude Code:
+
+```bash
+claude mcp add --transport stdio ocw -- ocw mcp
+```
+
+OpenCode `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ocw": {
+      "type": "local",
+      "command": ["ocw", "mcp"],
+      "enabled": true
+    }
+  }
+}
 ```
 
 ## Agent Integrations
@@ -344,6 +383,7 @@ Precedence is: CLI flags, environment variables, `.ocw.toml`, built-in defaults.
 ```text
 OCW_OUTPUT_ROOT      Override output root
 OCW_OPENCODE_BIN     Override opencode binary, useful for tests
+OCW_BIN              Override ocw binary used by the MCP server
 OCW_GIT_BIN          Override git binary
 OCW_GH_BIN           Override gh binary, useful for tests
 OCW_CONFIG           Override config file path
@@ -368,7 +408,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, cleanup, stats/serve passthrough, PR review artifacts, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
+The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, cleanup, stats/serve passthrough, PR review artifacts, MCP tools, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
 
 Run the full local quality gate:
 
@@ -395,8 +435,8 @@ make release-check
 Tag releases with signed tags:
 
 ```bash
-git tag -s v0.4.0-alpha -m "v0.4.0-alpha"
-git push origin v0.4.0-alpha
+git tag -s v0.5.0-alpha -m "v0.5.0-alpha"
+git push origin v0.5.0-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.

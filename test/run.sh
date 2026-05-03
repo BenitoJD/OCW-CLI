@@ -88,7 +88,7 @@ test_help_and_doctor() {
   local output
   "$OCW" --help >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.4.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.5.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -477,6 +477,10 @@ test_pr_review_command() {
   assert_dir ".out/prrev-pr-review/workers/risk-tests-cheap"
 }
 
+test_mcp_server() {
+  node "$ROOT/test/mcp-smoke.js"
+}
+
 run_test "help and doctor" test_help_and_doctor
 run_test "default routing" test_default_routing
 run_test "overrides and summary" test_overrides_and_summary
@@ -498,6 +502,7 @@ run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
+run_test "mcp server" test_mcp_server
 
 say "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

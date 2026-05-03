@@ -2,6 +2,13 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.5.0-alpha
+
+- Add `ocw mcp`, a dependency-free stdio MCP server implemented in Node.js.
+- Expose structured MCP tools: `ocw_run`, `ocw_last`, `ocw_show`, `ocw_apply_check`, `ocw_apply`, and `ocw_stats`.
+- Add MCP JSON-RPC smoke tests that exercise all OCW MCP tools through the real stdio server.
+- Package the MCP server and MCP smoke test in release archives.
+
 ## 0.4.0-alpha
 
 - Add `ocw pr summary` and `ocw pr review` for GitHub PR artifacts powered by `gh` and cheap OpenCode Go workers.

@@ -14,6 +14,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - `ocw batch tasks.ocw --concurrency 3` for several independent worker tasks.
 - `ocw pr summary 123` for a cheap local PR brief.
 - `ocw pr review 123` for a cheap local PR review artifact.
+- `ocw mcp` to expose OCW as structured MCP tools.
 
 ## Rules
 
@@ -24,6 +25,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - Use `ocw apply latest --check` before applying worker diffs.
 - Use `ocw doctor --deep` when setup or model reachability is uncertain.
 - Use `ocw pr review` for PR review help, then verify findings yourself before commenting or approving.
+- Prefer OCW MCP tools over shell strings when the MCP server is configured.
 - Read `.codex/opencode-workers/*/summary.md` first.
 - Inspect `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Do not trust worker output blindly.

@@ -14,6 +14,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - `ocw batch tasks.ocw --concurrency 3` for several independent worker tasks.
 - `ocw pr summary 123` for a cheap local PR brief.
 - `ocw pr review 123` for a cheap local PR review artifact.
+- `ocw mcp` to expose OCW as structured MCP tools.
 
 ## Workflow
 
@@ -32,6 +33,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - Use `ocw apply latest --check` before applying worker diffs.
 - Use `ocw doctor --deep` when setup or model reachability is uncertain.
 - Use `ocw pr review` for PR review help, then verify findings yourself before commenting or approving.
+- Prefer OCW MCP tools over shell strings when the MCP server is configured.
 - Do not blindly apply worker patches.
 - Do not commit `.codex/opencode-workers/` or `.codex/opencode-worktrees/`.
 

@@ -271,6 +271,7 @@ ocw bench --iterations 2
 ocw batch tasks.ocw --concurrency 3
 ocw pr summary 123
 ocw pr review 123
+ocw mcp
 ```
 
 Default models:
@@ -346,6 +347,64 @@ metadata.txt
 ```
 
 Read `review.md` or `summary.md` first, then inspect `pr.diff.patch` and individual worker outputs under `workers/` when needed.
+
+## MCP Server
+
+Start the local stdio MCP server:
+
+```bash
+ocw mcp
+```
+
+It exposes these structured tools:
+
+```text
+ocw_run
+ocw_last
+ocw_show
+ocw_apply_check
+ocw_apply
+ocw_stats
+```
+
+The tools accept structured arguments such as `cwd`, `output_root`, `mode`, `task`, `ref`, and `view`, then return text plus structured command status, stdout, stderr, and artifact paths.
+
+Claude Code:
+
+```bash
+claude mcp add --transport stdio ocw -- ocw mcp
+```
+
+OpenCode `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ocw": {
+      "type": "local",
+      "command": ["ocw", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+For repo-local development without installing `ocw`, use:
+
+```json
+{
+  "mcp": {
+    "ocw": {
+      "type": "local",
+      "command": ["node", "/absolute/path/to/OCW-CLI/mcp/ocw-mcp.js"],
+      "enabled": true
+    }
+  }
+}
+```
+
+`ocw_apply` can modify the working tree. Prefer `ocw_apply_check` first and keep the primary agent responsible for final review and tests.
 
 ## Project Config
 

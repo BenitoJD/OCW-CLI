@@ -10,7 +10,7 @@ PKG_DIR="$DIST/$PKG"
 rm -rf "$DIST"
 mkdir -p "$PKG_DIR"
 
-mkdir -p "$PKG_DIR/bin" "$PKG_DIR/docs" "$PKG_DIR/examples/codex" "$PKG_DIR/examples/claude" "$PKG_DIR/skills/opencode-worker" "$PKG_DIR/plugins/claude/ocw/.claude-plugin" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker" "$PKG_DIR/test/fixtures" "$PKG_DIR/scripts"
+mkdir -p "$PKG_DIR/bin" "$PKG_DIR/docs" "$PKG_DIR/examples/codex" "$PKG_DIR/examples/claude" "$PKG_DIR/mcp" "$PKG_DIR/skills/opencode-worker" "$PKG_DIR/plugins/claude/ocw/.claude-plugin" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker" "$PKG_DIR/test/fixtures" "$PKG_DIR/scripts"
 
 cp "$ROOT/bin/ocw" "$PKG_DIR/bin/ocw"
 cp "$ROOT/install.sh" "$PKG_DIR/install.sh"
@@ -24,10 +24,12 @@ cp "$ROOT/Makefile" "$PKG_DIR/Makefile"
 cp "$ROOT/docs/integrations.md" "$PKG_DIR/docs/integrations.md"
 cp "$ROOT/examples/codex/AGENTS.md" "$PKG_DIR/examples/codex/AGENTS.md"
 cp "$ROOT/examples/claude/CLAUDE.md" "$PKG_DIR/examples/claude/CLAUDE.md"
+cp "$ROOT/mcp/ocw-mcp.js" "$PKG_DIR/mcp/ocw-mcp.js"
 cp "$ROOT/skills/opencode-worker/SKILL.md" "$PKG_DIR/skills/opencode-worker/SKILL.md"
 cp "$ROOT/plugins/claude/ocw/.claude-plugin/plugin.json" "$PKG_DIR/plugins/claude/ocw/.claude-plugin/plugin.json"
 cp "$ROOT/plugins/claude/ocw/skills/opencode-worker/SKILL.md" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker/SKILL.md"
 cp "$ROOT/test/run.sh" "$PKG_DIR/test/run.sh"
+cp "$ROOT/test/mcp-smoke.js" "$PKG_DIR/test/mcp-smoke.js"
 cp "$ROOT/test/fixtures/opencode" "$PKG_DIR/test/fixtures/opencode"
 cp "$ROOT/test/fixtures/gh" "$PKG_DIR/test/fixtures/gh"
 cp "$ROOT/scripts/lint.sh" "$PKG_DIR/scripts/lint.sh"
@@ -35,7 +37,7 @@ cp "$ROOT/scripts/install-skills.sh" "$PKG_DIR/scripts/install-skills.sh"
 cp "$ROOT/scripts/package.sh" "$PKG_DIR/scripts/package.sh"
 cp "$ROOT/scripts/release-check.sh" "$PKG_DIR/scripts/release-check.sh"
 
-chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
+chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
 
 tar -czf "$DIST/$PKG.tar.gz" -C "$DIST" "$PKG"
 
