@@ -89,11 +89,11 @@ test_default_routing() {
   make_repo "$repo"
   cd "$repo"
 
-  OCW_TEST_STAMP=route-explore run_ocw explore "route explore" >/dev/null
-  OCW_TEST_STAMP=route-review run_ocw review "route review" >/dev/null
-  OCW_TEST_STAMP=route-patch run_ocw patch "route patch" >/dev/null
-  OCW_TEST_STAMP=route-scan run_ocw scan "route scan" >/dev/null
-  OCW_TEST_STAMP=route-cheap run_ocw cheap "route cheap" >/dev/null
+  OCW_TEST_STAMP="route-explore" run_ocw explore "route explore" >/dev/null
+  OCW_TEST_STAMP="route-review" run_ocw review "route review" >/dev/null
+  OCW_TEST_STAMP="route-patch" run_ocw patch "route patch" >/dev/null
+  OCW_TEST_STAMP="route-scan" run_ocw scan "route scan" >/dev/null
+  OCW_TEST_STAMP="route-cheap" run_ocw cheap "route cheap" >/dev/null
 
   assert_contains ".out/route-explore-explore/metadata.txt" "model=opencode-go/deepseek-v4-flash"
   assert_contains ".out/route-review-review/metadata.txt" "model=opencode-go/deepseek-v4-pro"
@@ -107,7 +107,7 @@ test_overrides_and_summary() {
   make_repo "$repo"
   cd "$repo"
 
-  OCW_TEST_STAMP=override run_ocw \
+  OCW_TEST_STAMP="override" run_ocw \
     --model opencode-go/minimax-m2.7 \
     --agent build \
     --variant high \
@@ -128,7 +128,7 @@ test_diff_capture() {
   make_repo "$repo"
   cd "$repo"
 
-  OCW_TEST_STAMP=diff run_ocw patch "OCW_MOCK_EDIT" >/dev/null
+  OCW_TEST_STAMP="diff" run_ocw patch "OCW_MOCK_EDIT" >/dev/null
 
   assert_contains ".out/diff-patch/diff.after.patch" "mock edit from opencode-go/kimi-k2.6"
   assert_contains ".out/diff-patch/status.after.txt" "M tracked.txt"
@@ -140,7 +140,7 @@ test_exit_code_capture() {
   cd "$repo"
 
   set +e
-  OCW_TEST_STAMP=fail run_ocw cheap "OCW_MOCK_FAIL" >/dev/null
+  OCW_TEST_STAMP="fail" run_ocw cheap "OCW_MOCK_FAIL" >/dev/null
   local status=$?
   set -e
 
@@ -154,8 +154,8 @@ test_output_collision() {
   make_repo "$repo"
   cd "$repo"
 
-  OCW_TEST_STAMP=same run_ocw cheap "first" >/dev/null
-  OCW_TEST_STAMP=same run_ocw cheap "second" >/dev/null
+  OCW_TEST_STAMP="same" run_ocw cheap "first" >/dev/null
+  OCW_TEST_STAMP="same" run_ocw cheap "second" >/dev/null
 
   assert_dir ".out/same-cheap"
   assert_dir ".out/same-cheap-1"
@@ -166,7 +166,7 @@ test_worktree_patch_isolation() {
   make_repo "$repo"
   cd "$repo"
 
-  OCW_TEST_STAMP=wt run_ocw --worktree patch "OCW_MOCK_EDIT" >/dev/null
+  OCW_TEST_STAMP="wt" run_ocw --worktree patch "OCW_MOCK_EDIT" >/dev/null
 
   assert_not_contains "tracked.txt" "mock edit from opencode-go/kimi-k2.6"
   assert_contains ".out/wt-patch/diff.after.patch" "mock edit from opencode-go/kimi-k2.6"
