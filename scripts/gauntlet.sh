@@ -133,6 +133,7 @@ negative_matrix() {
     OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$ocw" doctor --help >/dev/null
     "$ocw" init --help >/dev/null
     "$ocw" uninstall --help >/dev/null
+    "$ocw" config --help >/dev/null
     "$ocw" apply --help >/dev/null
     "$ocw" clean --help >/dev/null
     "$ocw" agent-pack --help >/dev/null
@@ -143,6 +144,7 @@ negative_matrix() {
     "$ocw" policy --help >/dev/null
     "$ocw" gh-extension --help >/dev/null
     "$ocw" security --help >/dev/null
+    "$ocw" support --help >/dev/null
     "$ocw" mcp-config --help >/dev/null
     "$ocw" completions bash >/dev/null
     "$ocw" completions zsh >/dev/null
@@ -155,6 +157,8 @@ negative_matrix() {
     expect_fail "$ocw" batch missing-file.ocw
     expect_fail "$ocw" eval missing-file.ocw
     expect_fail "$ocw" clean --days nope
+    printf '[defaults]\nworktree = nope\n' > bad.ocw.toml
+    expect_fail "$ocw" config validate --file bad.ocw.toml
     expect_fail "$ocw" pr review
     expect_fail "$ocw" apply latest
   )
@@ -185,6 +189,10 @@ package_flow_matrix() {
     "$ocw" version | grep -Fq "ocw $VERSION"
     "$ocw" doctor --deep > "$TMP_ROOT/doctor.txt"
     assert_contains "$TMP_ROOT/doctor.txt" "doctor deep: ok"
+    "$ocw" config init --file ocw.alt.toml >/dev/null
+    "$ocw" config validate --file ocw.alt.toml --json > "$TMP_ROOT/config-validate.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/config-validate.json"
+    assert_contains "$TMP_ROOT/config-validate.json" '"valid": true'
 
     "$ocw" init --project-skills >/dev/null
     "$ocw" init --project-skills >/dev/null
@@ -202,7 +210,7 @@ package_flow_matrix() {
     assert_file ".opencode/agents/ocw-reviewer.md"
     assert_file ".opencode/agents/ocw-patcher.md"
     assert_file ".opencode/agents/ocw-triage.md"
-    git add .gitignore .ocw.toml AGENTS.md CLAUDE.md .opencode .claude .agents
+    git add .gitignore .ocw.toml ocw.alt.toml AGENTS.md CLAUDE.md .opencode .claude .agents
     git -c user.name='OCW Gauntlet' -c user.email='ocw-gauntlet@example.invalid' commit -q -m 'add ocw config'
 
     OCW_TEST_CREATED_AT="2026-05-04T00:00:01Z" OCW_TEST_STAMP=g-explore "$ocw" explore "map repository" >/dev/null
@@ -291,6 +299,8 @@ EVALS
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/manifest.json"
     "$ocw" audit latest --json > "$TMP_ROOT/audit.json"
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/audit.json"
+    "$ocw" support bundle --out "$TMP_ROOT/support.tgz" >/dev/null
+    assert_file "$TMP_ROOT/support.tgz"
     "$ocw" show latest --summary >/dev/null
     "$ocw" show latest --path >/dev/null
     latest="$("$ocw" last)"

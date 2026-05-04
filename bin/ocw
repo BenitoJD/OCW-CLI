@@ -34,6 +34,7 @@ Usage:
   ocw [options] <explore|review|patch|scan|cheap> [options] <task...>
   ocw init [options]
   ocw uninstall [--bin] [--skills] [--project] [--all] [--dry-run] [--yes] [--force]
+  ocw config init|path|show|validate [options]
   ocw last [mode]
   ocw show [latest|run-dir] [--summary|--diff|--stat|--status|--metadata|--jsonl|--path]
   ocw manifest [latest|run-dir] [--json]
@@ -55,6 +56,7 @@ Usage:
   ocw policy init|show|check [options]
   ocw gh-extension install [--dir DIR] [--force]
   ocw security init|scorecard|policy [options]
+  ocw support bundle [--out FILE] [--include-summary]
   ocw mcp-config [codex|claude|opencode|all]
   ocw completions [bash|zsh|fish]
   ocw mcp
@@ -1268,6 +1270,214 @@ EOF
   fi
 
   printf 'OCW init complete\n'
+}
+
+default_project_config_path() {
+  local root
+
+  if have_command "$GIT_BIN"; then
+    root="$(git_root "$PWD")"
+    if [[ -n "$root" ]]; then
+      printf '%s/.ocw.toml\n' "$root"
+      return
+    fi
+  fi
+
+  printf '%s/.ocw.toml\n' "$PWD"
+}
+
+config_validate_file() {
+  local file="$1"
+  local checks_file="$2"
+  local section="" line key value lower lineno=0 status=0
+
+  [[ -f "$file" ]] || {
+    printf 'fail\tfile\tconfig file not found: %s\n' "$file" >> "$checks_file"
+    return 1
+  }
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    line="${line%%#*}"
+    line="$(trim "$line")"
+    [[ -z "$line" ]] && continue
+
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      case "$section" in
+        models|agents|defaults)
+          printf 'ok\tsection\tline %s: [%s]\n' "$lineno" "$section" >> "$checks_file"
+          ;;
+        *)
+          printf 'fail\tsection\tline %s: unknown section [%s]\n' "$lineno" "$section" >> "$checks_file"
+          status=1
+          ;;
+      esac
+      continue
+    fi
+
+    if [[ "$line" != *=* ]]; then
+      printf 'fail\tsyntax\tline %s: expected key = value\n' "$lineno" >> "$checks_file"
+      status=1
+      continue
+    fi
+
+    key="$(trim "${line%%=*}")"
+    value="$(trim "${line#*=}")"
+    value="$(unquote "$value")"
+    case "$section:$key" in
+      models:cheap|models:explore|models:scan|models:review|models:patch|agents:cheap|agents:explore|agents:scan|agents:review|agents:patch|defaults:output_root|defaults:variant|defaults:attach)
+        if [[ -n "$value" ]]; then
+          printf 'ok\tkey\tline %s: %s.%s\n' "$lineno" "$section" "$key" >> "$checks_file"
+        else
+          printf 'fail\tvalue\tline %s: %s.%s is empty\n' "$lineno" "$section" "$key" >> "$checks_file"
+          status=1
+        fi
+        ;;
+      defaults:worktree|defaults:rm_worktree|defaults:require_clean|defaults:auto_approve)
+        lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+        if [[ "$lower" == "1" || "$lower" == "true" || "$lower" == "yes" || "$lower" == "on" || "$lower" == "0" || "$lower" == "false" || "$lower" == "no" || "$lower" == "off" ]]; then
+          printf 'ok\tkey\tline %s: %s.%s\n' "$lineno" "$section" "$key" >> "$checks_file"
+        else
+          printf 'fail\tvalue\tline %s: %s.%s must be a boolean\n' "$lineno" "$section" "$key" >> "$checks_file"
+          status=1
+        fi
+        ;;
+      :*)
+        printf 'fail\tsection\tline %s: key outside a section\n' "$lineno" >> "$checks_file"
+        status=1
+        ;;
+      *)
+        printf 'warn\tkey\tline %s: unknown key %s.%s\n' "$lineno" "$section" "$key" >> "$checks_file"
+        ;;
+    esac
+  done < "$file"
+
+  return "$status"
+}
+
+config_command() {
+  local subcommand="${1:-show}"
+  shift || true
+  local target force=0 json=0 checks_file severity id message first status=0
+
+  case "$subcommand" in
+    init)
+      target="$(default_project_config_path)"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --file)
+            [[ $# -ge 2 ]] || die "--file requires a value"
+            target="$2"
+            shift 2
+            ;;
+          --force)
+            force=1
+            shift
+            ;;
+          -h|--help)
+            printf 'Usage: ocw config init [--file FILE] [--force]\n'
+            return
+            ;;
+          *)
+            die "unknown config init option: $1"
+            ;;
+        esac
+      done
+      write_default_config "$target" "$force"
+      ;;
+    path)
+      if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
+        printf '%s\n' "$OCW_CONFIG_FILE"
+      else
+        default_project_config_path
+      fi
+      ;;
+    show)
+      if [[ $# -gt 0 ]]; then
+        die "unknown config show option: $1"
+      fi
+      if [[ -n "${OCW_CONFIG_FILE:-}" && -f "$OCW_CONFIG_FILE" ]]; then
+        cat "$OCW_CONFIG_FILE"
+      else
+        print_default_config
+      fi
+      ;;
+    validate)
+      target="${OCW_CONFIG_FILE:-$(default_project_config_path)}"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --file)
+            [[ $# -ge 2 ]] || die "--file requires a value"
+            target="$2"
+            shift 2
+            ;;
+          --json)
+            json=1
+            shift
+            ;;
+          -h|--help)
+            printf 'Usage: ocw config validate [--file FILE] [--json]\n'
+            return
+            ;;
+          *)
+            target="$1"
+            shift
+            ;;
+        esac
+      done
+      checks_file="$(mktemp "${TMPDIR:-/tmp}/ocw-config-checks.XXXXXX")"
+      config_validate_file "$target" "$checks_file" || status=1
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.config.validate.v1",\n'
+        printf '  "file": '
+        json_string "$target"
+        printf ',\n  "valid": %s,\n  "checks": [\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
+        first=1
+        while IFS=$'\t' read -r severity id message; do
+          [[ -n "$severity" ]] || continue
+          if [[ "$first" -eq 0 ]]; then
+            printf ',\n'
+          fi
+          printf '    { "severity": '
+          json_string "$severity"
+          printf ', "id": '
+          json_string "$id"
+          printf ', "message": '
+          json_string "$message"
+          printf ' }'
+          first=0
+        done < "$checks_file"
+        printf '\n  ]\n}\n'
+      else
+        printf 'OCW config: %s\n' "$target"
+        while IFS=$'\t' read -r severity id message; do
+          [[ -n "$severity" ]] || continue
+          printf '[%s] %s: %s\n' "$severity" "$id" "$message"
+        done < "$checks_file"
+        if [[ "$status" -eq 0 ]]; then
+          printf 'config: ok\n'
+        else
+          printf 'config: invalid\n'
+        fi
+      fi
+      rm -f "$checks_file"
+      return "$status"
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw config init [--file FILE] [--force]
+  ocw config path
+  ocw config show
+  ocw config validate [--file FILE] [--json]
+EOF
+      ;;
+    *)
+      die "unknown config command: $subcommand"
+      ;;
+  esac
 }
 
 last_command() {
@@ -3454,6 +3664,160 @@ EOF
   esac
 }
 
+sanitize_support_file() {
+  local source="$1"
+  local target="$2"
+
+  if [[ ! -f "$source" ]]; then
+    return
+  fi
+
+  awk '
+    BEGIN { IGNORECASE = 1 }
+    /^[[:space:]]*#/ { print; next }
+    /^[[:space:]]*$/ { print; next }
+    {
+      line = $0
+      key = line
+      sub(/[=:].*$/, "", key)
+      if (key ~ /(token|secret|password|passwd|api[_-]?key|auth|credential|cookie)/) {
+        sub(/[=:].*$/, "= <redacted>", line)
+      }
+      print line
+    }
+  ' "$source" > "$target"
+}
+
+support_command() {
+  local subcommand="${1:-bundle}"
+  shift || true
+  local out_file=""
+  local include_summary=0
+  local include_latest=1
+  local stamp bundle_dir latest_dir run_dir root_abs archive config_source
+
+  case "$subcommand" in
+    bundle)
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage: ocw support bundle [--out FILE] [--include-summary] [--no-latest]
+
+Creates a sanitized diagnostic tarball for bug reports. It excludes diffs, JSONL,
+and worker summaries unless --include-summary is explicitly provided.
+EOF
+      return
+      ;;
+    *)
+      die "unknown support command: $subcommand"
+      ;;
+  esac
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --out)
+        [[ $# -ge 2 ]] || die "--out requires a value"
+        out_file="$2"
+        shift 2
+        ;;
+      --include-summary)
+        include_summary=1
+        shift
+        ;;
+      --no-latest)
+        include_latest=0
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw support bundle [--out FILE] [--include-summary] [--no-latest]\n'
+        return
+        ;;
+      *)
+        die "unknown support bundle option: $1"
+        ;;
+    esac
+  done
+
+  stamp="${OCW_TEST_STAMP:-$(date +%Y%m%d-%H%M%S)}"
+  bundle_dir="$(mktemp -d "${TMPDIR:-/tmp}/ocw-support.XXXXXX")"
+  mkdir -p "$bundle_dir/support"
+
+  {
+    printf 'OCW support bundle\n'
+    printf 'created_at=%s\n' "${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+    printf 'cwd=%s\n' "$PWD"
+    printf 'version=%s\n' "$VERSION"
+    printf 'include_summary=%s\n' "$include_summary"
+  } > "$bundle_dir/support/README.txt"
+
+  {
+    printf 'ocw: %s\n' "$VERSION"
+    if have_command "$OPENCODE_BIN"; then
+      printf 'opencode: %s\n' "$("$OPENCODE_BIN" --version 2>/dev/null || "$OPENCODE_BIN" version 2>/dev/null || true)"
+    else
+      printf 'opencode: missing\n'
+    fi
+    if have_command "$GIT_BIN"; then
+      printf 'git: %s\n' "$("$GIT_BIN" --version 2>/dev/null || true)"
+    else
+      printf 'git: missing\n'
+    fi
+    if have_command "$GH_BIN"; then
+      printf 'gh: %s\n' "$("$GH_BIN" --version 2>/dev/null | head -n 1 || true)"
+    else
+      printf 'gh: missing\n'
+    fi
+    if have_command node; then
+      printf 'node: %s\n' "$(node --version 2>/dev/null || true)"
+    else
+      printf 'node: missing\n'
+    fi
+  } > "$bundle_dir/support/versions.txt"
+
+  set +e
+  "$OCW_SELF" doctor --deep --json > "$bundle_dir/support/doctor.json" 2> "$bundle_dir/support/doctor.stderr"
+  set -e
+
+  config_source="${OCW_CONFIG_FILE:-}"
+  [[ -n "$config_source" ]] || config_source="$(default_project_config_path)"
+  sanitize_support_file "$config_source" "$bundle_dir/support/config.sanitized.toml"
+
+  if have_command "$GIT_BIN" && git_is_repo "$PWD"; then
+    "$GIT_BIN" status --short > "$bundle_dir/support/git-status.txt" || true
+    "$GIT_BIN" rev-parse --show-toplevel > "$bundle_dir/support/git-root.txt" 2>/dev/null || true
+    "$GIT_BIN" rev-parse HEAD > "$bundle_dir/support/git-head.txt" 2>/dev/null || true
+  fi
+
+  if [[ "$include_latest" -eq 1 ]]; then
+    root_abs="$(prepare_output_root "$out_base")"
+    set +e
+    run_dir="$(resolve_run_dir "$root_abs" "latest" 2>/dev/null)"
+    set -e
+    if [[ -n "${run_dir:-}" ]]; then
+      latest_dir="$bundle_dir/support/latest"
+      mkdir -p "$latest_dir"
+      cp "$run_dir/metadata.txt" "$latest_dir/metadata.txt" 2>/dev/null || true
+      set +e
+      "$OCW_SELF" manifest "$run_dir" --json > "$latest_dir/manifest.json" 2> "$latest_dir/manifest.stderr"
+      "$OCW_SELF" audit "$run_dir" --json > "$latest_dir/audit.json" 2> "$latest_dir/audit.stderr"
+      set -e
+      if [[ "$include_summary" -eq 1 && -f "$run_dir/summary.md" ]]; then
+        cp "$run_dir/summary.md" "$latest_dir/summary.md"
+      fi
+    else
+      printf 'No latest run found under %s\n' "$root_abs" > "$bundle_dir/support/latest.txt"
+    fi
+  fi
+
+  if [[ -z "$out_file" ]]; then
+    out_file="$PWD/ocw-support-$stamp.tar.gz"
+  fi
+  mkdir -p "$(dirname "$out_file")"
+  archive="$(cd "$bundle_dir" && tar -czf "$out_file" support && printf '%s\n' "$out_file")"
+  rm -rf "$bundle_dir"
+  printf 'OCW support bundle: %s\n' "$archive"
+}
+
 mcp_config_command() {
   local target="${1:-all}"
 
@@ -3529,7 +3893,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security mcp-config completions mcp version"
+  commands="init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security support mcp-config completions mcp version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -3549,6 +3913,10 @@ _ocw()
       COMPREPLY=( $(compgen -W "summary review" -- "$cur") )
       return 0
       ;;
+    config)
+      COMPREPLY=( $(compgen -W "init path show validate" -- "$cur") )
+      return 0
+      ;;
     agents)
       COMPREPLY=( $(compgen -W "sync diff doctor" -- "$cur") )
       return 0
@@ -3565,6 +3933,10 @@ _ocw()
       COMPREPLY=( $(compgen -W "init scorecard policy" -- "$cur") )
       return 0
       ;;
+    support)
+      COMPREPLY=( $(compgen -W "bundle" -- "$cur") )
+      return 0
+      ;;
   esac
 }
 complete -F _ocw ocw
@@ -3577,9 +3949,9 @@ EOF
 _ocw() {
   local -a commands modes
   commands=(
-    init uninstall last show manifest audit apply clean stats serve doctor models
+    init uninstall config last show manifest audit apply clean stats serve doctor models
     agent-pack agents bench batch eval pr report policy gh-extension security
-    mcp-config completions mcp version
+    support mcp-config completions mcp version
   )
   modes=(cheap explore scan review patch)
 
@@ -3597,10 +3969,12 @@ _ocw() {
         mcp-config) _values 'target' codex claude opencode all ;;
         completions) _values 'shell' bash zsh fish ;;
         pr) _values 'action' summary review ;;
+        config) _values 'action' init path show validate ;;
         agents) _values 'action' sync diff doctor ;;
         policy) _values 'action' init show check ;;
         gh-extension) _values 'action' install path ;;
         security) _values 'action' init scorecard policy ;;
+        support) _values 'action' bundle ;;
       esac
       ;;
   esac
@@ -3611,14 +3985,16 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security mcp-config completions mcp version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security support mcp-config completions mcp version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
+complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from agents" -f -a "sync diff doctor"
 complete -c ocw -n "__fish_seen_subcommand_from policy" -f -a "init show check"
 complete -c ocw -n "__fish_seen_subcommand_from gh-extension" -f -a "install path"
 complete -c ocw -n "__fish_seen_subcommand_from security" -f -a "init scorecard policy"
+complete -c ocw -n "__fish_seen_subcommand_from support" -f -a "bundle"
 EOF
       ;;
     -h|--help|help|"")
@@ -3671,6 +4047,11 @@ case "$1" in
     shift
     init_project "$@"
     exit 0
+    ;;
+  config)
+    shift
+    config_command "$@"
+    exit $?
     ;;
   uninstall)
     shift
@@ -3765,6 +4146,11 @@ case "$1" in
   security)
     shift
     security_command "$@"
+    exit $?
+    ;;
+  support)
+    shift
+    support_command "$@"
     exit $?
     ;;
   mcp-config)

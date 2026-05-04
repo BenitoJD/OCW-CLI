@@ -37,6 +37,7 @@ cp "$ROOT/scripts/install-skills.sh" "$PKG_DIR/scripts/install-skills.sh"
 cp "$ROOT/scripts/package.sh" "$PKG_DIR/scripts/package.sh"
 cp "$ROOT/scripts/release-check.sh" "$PKG_DIR/scripts/release-check.sh"
 cp "$ROOT/scripts/gauntlet.sh" "$PKG_DIR/scripts/gauntlet.sh"
+cp "$ROOT/scripts/install-release.sh" "$PKG_DIR/scripts/install-release.sh"
 
 chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
 

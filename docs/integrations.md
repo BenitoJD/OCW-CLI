@@ -396,6 +396,15 @@ ocw agents doctor
 ocw agents diff
 ```
 
+For repeatable config validation and support diagnostics:
+
+```bash
+ocw config validate --json
+ocw support bundle --out ocw-support.tgz
+```
+
+`ocw support bundle` redacts likely credential keys and excludes worker summaries unless `--include-summary` is explicitly passed.
+
 Print client-specific setup snippets:
 
 ```bash

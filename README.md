@@ -28,6 +28,14 @@ The safety model is intentionally conservative: worker output is draft labor. Yo
 
 This symlinks `bin/ocw` into `~/.local/bin/ocw`.
 
+Install from a GitHub Release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash
+```
+
+The release installer downloads the tarball, verifies its SHA-256 file, and runs the packaged installer.
+
 Requirements:
 
 - `opencode`
@@ -65,6 +73,15 @@ ocw agents sync
 ```
 
 This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents. `ocw agents sync|diff|doctor` is the easiest project-local integration flow when you want repeatable setup across many repos.
+
+Config helpers:
+
+```bash
+ocw config path
+ocw config show
+ocw config validate --json
+ocw config init --force
+```
 
 ## Usage
 
@@ -193,6 +210,14 @@ Add OpenSSF Scorecard scanning:
 ```bash
 ocw security init
 ```
+
+Create a sanitized support bundle for bug reports:
+
+```bash
+ocw support bundle --out ocw-support.tgz
+```
+
+The bundle includes versions, `doctor --json`, sanitized config, git status, and latest manifest/audit metadata. It does not include worker summaries unless you pass `--include-summary`.
 
 Pass through OpenCode cost and server commands:
 
@@ -499,7 +524,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report output, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report output, support bundle redaction, release installer dry-runs, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

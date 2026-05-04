@@ -14,6 +14,7 @@ files=(
   "$ROOT/scripts/package.sh"
   "$ROOT/scripts/release-check.sh"
   "$ROOT/scripts/gauntlet.sh"
+  "$ROOT/scripts/install-release.sh"
 )
 
 js_files=(

@@ -678,6 +678,57 @@ EOF
   assert_contains ".github/workflows/scorecard.yml" "actions/checkout@v6"
 }
 
+test_config_support_and_release_installer() {
+  local repo="$TMP_ROOT/config-support"
+  local validate_json invalid_status support_archive extract_dir install_plan
+  make_repo "$repo"
+  cd "$repo"
+
+  "$OCW" config init --file custom.ocw.toml >/dev/null
+  assert_file custom.ocw.toml
+  validate_json="$TMP_ROOT/config-validate.json"
+  "$OCW" config validate --file custom.ocw.toml --json > "$validate_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$validate_json"
+  assert_contains "$validate_json" '"valid": true'
+
+  printf '[defaults]\nworktree = maybe\n' > bad.ocw.toml
+  set +e
+  "$OCW" config validate --file bad.ocw.toml > "$TMP_ROOT/bad-config.txt"
+  invalid_status=$?
+  set -e
+  [[ "$invalid_status" -eq 1 ]] || fail "expected invalid config status 1, got $invalid_status"
+  assert_contains "$TMP_ROOT/bad-config.txt" "must be a boolean"
+
+  cat > secret.ocw.toml <<'EOF'
+[models]
+cheap = "opencode-go/qwen3.5-plus"
+
+[defaults]
+output_root = ".out"
+api_key = "do-not-leak"
+EOF
+
+  OCW_CONFIG="$PWD/secret.ocw.toml" OCW_TEST_STAMP="support-run" run_ocw cheap "support bundle" >/dev/null
+  support_archive="$TMP_ROOT/support.tgz"
+  OCW_CONFIG="$PWD/secret.ocw.toml" OCW_OUTPUT_ROOT=".out" OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" support bundle --out "$support_archive" >/dev/null
+  assert_file "$support_archive"
+  extract_dir="$TMP_ROOT/support-extract"
+  mkdir -p "$extract_dir"
+  tar -xzf "$support_archive" -C "$extract_dir"
+  assert_file "$extract_dir/support/README.txt"
+  assert_file "$extract_dir/support/doctor.json"
+  assert_file "$extract_dir/support/config.sanitized.toml"
+  assert_file "$extract_dir/support/latest/manifest.json"
+  assert_contains "$extract_dir/support/config.sanitized.toml" "api_key = <redacted>"
+  assert_not_contains "$extract_dir/support/config.sanitized.toml" "do-not-leak"
+  [[ ! -f "$extract_dir/support/latest/summary.md" ]] || fail "support bundle included summary without opt-in"
+
+  install_plan="$TMP_ROOT/install-release-plan.txt"
+  "$ROOT/scripts/install-release.sh" --version v0.7.0-alpha --dry-run > "$install_plan"
+  assert_contains "$install_plan" "dry run: would download"
+  assert_contains "$install_plan" "ocw-0.7.0-alpha.tar.gz"
+}
+
 test_pr_summary_command() {
   local repo="$TMP_ROOT/pr-summary"
   make_repo "$repo"
@@ -756,6 +807,7 @@ run_test "agent pack install" test_agent_pack_install
 run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
 run_test "extended cli features" test_extended_cli_features
+run_test "config support and release installer" test_config_support_and_release_installer
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
 run_test "mcp server" test_mcp_server

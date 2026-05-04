@@ -4,6 +4,9 @@ All notable changes to `ocw` are documented here.
 
 ## 0.7.0-alpha
 
+- Add checksum-verifying `scripts/install-release.sh` for GitHub Release installs.
+- Add `ocw config init|path|show|validate` for project config setup and validation.
+- Add `ocw support bundle` for sanitized diagnostic tarballs that exclude worker content by default.
 - Add `ocw report` with Markdown, HTML, JSON, JUnit XML, and SARIF output for saved worker artifacts.
 - Add `ocw eval` for lightweight model/task eval files with saved Markdown, TSV, JSONL, summaries, metadata, and audit support.
 - Add `ocw doctor --json --fix` for machine-readable diagnostics and safe skill/output-root repair.
