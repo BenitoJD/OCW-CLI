@@ -29,20 +29,6 @@ The safety model is intentionally conservative: worker output is draft labor. Yo
 
 ## Install
 
-Install with Homebrew:
-
-```bash
-brew install BenitoJD/ocw/ocw
-```
-
-Or install from this repository:
-
-```bash
-./install.sh
-```
-
-This symlinks `bin/ocw` into `~/.local/bin/ocw`.
-
 Install from a GitHub Release:
 
 ```bash
@@ -56,6 +42,26 @@ Require attestation verification:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash -s -- --require-attestation
 ```
+
+Install with Homebrew:
+
+```bash
+brew install BenitoJD/ocw/ocw
+```
+
+If Homebrew appears to hang after printing OCW metadata, the usual cause is local macOS Xcode discovery waiting on Spotlight `mdfind`, not OCW. Use the release installer above while repairing Homebrew, then run:
+
+```bash
+ocw homebrew doctor
+```
+
+Or install from this repository:
+
+```bash
+./install.sh
+```
+
+This symlinks `bin/ocw` into `~/.local/bin/ocw`.
 
 Generate a Homebrew formula for a tap:
 
@@ -562,7 +568,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 
@@ -589,8 +595,8 @@ make release-check
 Tag releases with signed tags:
 
 ```bash
-git tag -s v0.7.0-alpha -m "v0.7.0-alpha"
-git push origin v0.7.0-alpha
+git tag -s v0.7.1-alpha -m "v0.7.1-alpha"
+git push origin v0.7.1-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.
@@ -598,8 +604,8 @@ The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checks
 Homebrew tap release flow:
 
 ```bash
-gh release download v0.7.0-alpha -R BenitoJD/OCW-CLI -p 'ocw-0.7.0-alpha.tar.gz.sha256'
-ocw homebrew formula --version 0.7.0-alpha --sha256 "$(awk '{print $1}' ocw-0.7.0-alpha.tar.gz.sha256)" --out Formula/ocw.rb
+gh release download v0.7.1-alpha -R BenitoJD/OCW-CLI -p 'ocw-0.7.1-alpha.tar.gz.sha256'
+ocw homebrew formula --version 0.7.1-alpha --sha256 "$(awk '{print $1}' ocw-0.7.1-alpha.tar.gz.sha256)" --out Formula/ocw.rb
 ```
 
 Roadmap:

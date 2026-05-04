@@ -2,6 +2,12 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.7.1-alpha
+
+- Add `ocw homebrew doctor` to detect local Homebrew/macOS Xcode discovery stalls caused by a stuck Spotlight `mdfind` lookup.
+- Document the verified release installer as the fallback when local Homebrew is unhealthy.
+- Keep the Homebrew formula lightweight while surfacing clear install troubleshooting.
+
 ## 0.7.0-alpha
 
 - Add GitHub release artifact attestations and optional installer-side attestation verification.

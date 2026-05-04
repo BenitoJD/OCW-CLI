@@ -106,6 +106,7 @@ install_from_package() {
   tar -xzf "$DIST" -C "$extract_dir"
   assert_file "$extract_dir/ocw-$VERSION/ROADMAP.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/feedback.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/troubleshooting.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/assets/ocw-demo.svg"
   assert_file "$extract_dir/ocw-$VERSION/docs/site/index.html"
   OCW_INSTALL_DIR="$install_dir" "$extract_dir/ocw-$VERSION/install.sh" >/dev/null
@@ -122,6 +123,7 @@ check_completions() {
   "$ocw" completions fish > "$out_dir/ocw.fish"
   bash -n "$out_dir/ocw.bash"
   assert_contains "$out_dir/ocw.bash" "_ocw()"
+  assert_contains "$out_dir/ocw.bash" "formula doctor"
   assert_contains "$out_dir/ocw.zsh" "summary review"
   assert_contains "$out_dir/ocw.fish" "mcp help version"
 }

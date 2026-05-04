@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.7.0-alpha"
+VERSION="0.7.1-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
@@ -56,6 +56,7 @@ Usage:
   ocw policy init|show|check [options]
   ocw gh-extension install [--dir DIR] [--force]
   ocw homebrew formula [--version VERSION] [--sha256 SHA] [--out FILE]
+  ocw homebrew doctor [--timeout SECONDS] [--json]
   ocw security init|scorecard|policy|badge|eval [options]
   ocw support bundle [--out FILE] [--include-summary]
   ocw trace [latest|run-dir] [--json]
@@ -3765,11 +3766,17 @@ homebrew_formula_command() {
   case "$subcommand" in
     formula)
       ;;
+    doctor)
+      homebrew_doctor_command "$@"
+      return
+      ;;
     -h|--help|help)
       cat <<'EOF'
 Usage: ocw homebrew formula [--version VERSION] [--sha256 SHA] [--url URL] [--out FILE]
+       ocw homebrew doctor [--timeout SECONDS] [--json]
 
 Prints a Homebrew formula for an OCW GitHub Release archive.
+Checks the local Homebrew/Xcode discovery path for known macOS stalls.
 EOF
       return
       ;;
@@ -3836,6 +3843,7 @@ class Ocw < Formula
     <<~EOS
       OCW requires OpenCode on PATH for worker runs.
       Install Node.js separately if you want to run: ocw mcp
+      Troubleshoot Homebrew stalls with: ocw homebrew doctor
       Run: ocw doctor --deep
     EOS
   end
@@ -3855,6 +3863,158 @@ EOF
     cat "$tmp"
     rm -f "$tmp"
   fi
+}
+
+homebrew_run_with_timeout() {
+  local timeout="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  shift 3
+  local pid elapsed status
+
+  "$@" >"$stdout_file" 2>"$stderr_file" &
+  pid="$!"
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( elapsed >= timeout )); then
+      {
+        kill "$pid" || true
+        sleep 0.2
+        kill -9 "$pid" || true
+        wait "$pid" || true
+      } 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  set +e
+  wait "$pid"
+  status="$?"
+  set -e
+  return "$status"
+}
+
+homebrew_doctor_command() {
+  local timeout=5
+  local json=0
+  local brew_bin="${OCW_BREW_BIN:-}"
+  local mdfind_bin="${OCW_MDFIND_BIN:-/usr/bin/mdfind}"
+  local query="kMDItemCFBundleIdentifier == com.apple.dt.Xcode || kMDItemCFBundleIdentifier == com.apple.Xcode"
+  local tmp_out tmp_err status overall brew_message mdfind_severity mdfind_message brew_severity
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout)
+        [[ $# -ge 2 ]] || die "--timeout requires a value"
+        [[ "$2" =~ ^[0-9]+$ && "$2" -gt 0 ]] || die "--timeout must be a positive integer"
+        timeout="$2"
+        shift 2
+        ;;
+      --json)
+        json=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw homebrew doctor [--timeout SECONDS] [--json]
+
+Checks whether local Homebrew can finish the macOS Xcode Spotlight lookup that
+can otherwise make `brew install BenitoJD/ocw/ocw` appear to hang.
+EOF
+        return
+        ;;
+      *)
+        die "unknown homebrew doctor option: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "$brew_bin" ]]; then
+    brew_bin="$(command -v brew 2>/dev/null || true)"
+  fi
+  if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+    brew_severity="ok"
+    brew_message="$brew_bin"
+  elif [[ -n "$brew_bin" ]]; then
+    brew_severity="warn"
+    brew_message="$brew_bin is not executable"
+  else
+    brew_severity="warn"
+    brew_message="brew not found on PATH"
+  fi
+
+  overall="ok"
+  tmp_out="$(mktemp "${TMPDIR:-/tmp}/ocw-homebrew-mdfind.out.XXXXXX")"
+  tmp_err="$(mktemp "${TMPDIR:-/tmp}/ocw-homebrew-mdfind.err.XXXXXX")"
+  if [[ -x "$mdfind_bin" ]]; then
+    if homebrew_run_with_timeout "$timeout" "$tmp_out" "$tmp_err" "$mdfind_bin" "$query"; then
+      mdfind_severity="ok"
+      mdfind_message="$mdfind_bin completed within ${timeout}s"
+    else
+      status="$?"
+      overall="issue"
+      if [[ "$status" -eq 124 ]]; then
+        mdfind_severity="error"
+        mdfind_message="$mdfind_bin timed out after ${timeout}s while Homebrew-style Xcode discovery was running"
+      else
+        mdfind_severity="error"
+        mdfind_message="$mdfind_bin exited with status $status during Homebrew-style Xcode discovery"
+      fi
+    fi
+  else
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      overall="issue"
+      mdfind_severity="error"
+      mdfind_message="$mdfind_bin is not executable"
+    else
+      mdfind_severity="skip"
+      mdfind_message="mdfind is macOS-only"
+    fi
+  fi
+  rm -f "$tmp_out" "$tmp_err"
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.homebrew.doctor.v1",\n'
+    printf '  "overall": '
+    json_string "$overall"
+    printf ',\n'
+    printf '  "timeout_seconds": %s,\n' "$timeout"
+    printf '  "checks": [\n'
+    printf '    { "severity": '
+    json_string "$brew_severity"
+    printf ', "id": "brew", "message": '
+    json_string "$brew_message"
+    printf ' },\n'
+    printf '    { "severity": '
+    json_string "$mdfind_severity"
+    printf ', "id": "macos_mdfind_xcode_lookup", "message": '
+    json_string "$mdfind_message"
+    printf ' }\n'
+    printf '  ]\n'
+    printf '}\n'
+  else
+    printf 'homebrew doctor: %s\n' "$overall"
+    printf '%s brew: %s\n' "$brew_severity" "$brew_message"
+    printf '%s macos_mdfind_xcode_lookup: %s\n' "$mdfind_severity" "$mdfind_message"
+    if [[ "$overall" != "ok" ]]; then
+      cat <<'EOF'
+
+If Homebrew hangs after printing OCW metadata, use the release installer while
+repairing local Homebrew/Xcode discovery:
+
+  curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash
+
+Useful local checks:
+
+  xcode-select -p
+  /usr/bin/mdfind 'kMDItemCFBundleIdentifier == com.apple.dt.Xcode || kMDItemCFBundleIdentifier == com.apple.Xcode'
+EOF
+    fi
+  fi
+
+  [[ "$overall" == "ok" ]]
 }
 
 github_slug_from_remote() {
@@ -4339,7 +4499,7 @@ _ocw()
       return 0
       ;;
     homebrew)
-      COMPREPLY=( $(compgen -W "formula" -- "$cur") )
+      COMPREPLY=( $(compgen -W "formula doctor" -- "$cur") )
       return 0
       ;;
     security)
@@ -4386,7 +4546,7 @@ _ocw() {
         agents) _values 'action' sync diff doctor ;;
         policy) _values 'action' init show check ;;
         gh-extension) _values 'action' install path ;;
-        homebrew) _values 'action' formula ;;
+        homebrew) _values 'action' formula doctor ;;
         security) _values 'action' init scorecard policy badge eval ;;
         support) _values 'action' bundle ;;
       esac
@@ -4407,7 +4567,7 @@ complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show va
 complete -c ocw -n "__fish_seen_subcommand_from agents" -f -a "sync diff doctor"
 complete -c ocw -n "__fish_seen_subcommand_from policy" -f -a "init show check"
 complete -c ocw -n "__fish_seen_subcommand_from gh-extension" -f -a "install path"
-complete -c ocw -n "__fish_seen_subcommand_from homebrew" -f -a "formula"
+complete -c ocw -n "__fish_seen_subcommand_from homebrew" -f -a "formula doctor"
 complete -c ocw -n "__fish_seen_subcommand_from security" -f -a "init scorecard policy badge eval"
 complete -c ocw -n "__fish_seen_subcommand_from support" -f -a "bundle"
 EOF

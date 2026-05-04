@@ -90,7 +90,7 @@ test_help_and_doctor() {
   "$OCW" help config >/dev/null
   "$OCW" help mcp >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.7.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.7.1-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -689,7 +689,7 @@ EOF
 
 test_config_support_and_release_installer() {
   local repo="$TMP_ROOT/config-support"
-  local validate_json invalid_status support_archive extract_dir install_plan formula formula_mode mcp_json trace_json missing_trace_json trace_status
+  local validate_json invalid_status support_archive extract_dir install_plan formula formula_mode homebrew_ok homebrew_hang homebrew_json homebrew_status mcp_json trace_json missing_trace_json trace_status
   make_repo "$repo"
   cd "$repo"
 
@@ -733,19 +733,47 @@ EOF
   [[ ! -f "$extract_dir/support/latest/summary.md" ]] || fail "support bundle included summary without opt-in"
 
   install_plan="$TMP_ROOT/install-release-plan.txt"
-  "$ROOT/scripts/install-release.sh" --version v0.7.0-alpha --dry-run --require-attestation > "$install_plan"
+  "$ROOT/scripts/install-release.sh" --version v0.7.1-alpha --dry-run --require-attestation > "$install_plan"
   assert_contains "$install_plan" "dry run: would download"
   assert_contains "$install_plan" "would require GitHub artifact attestation verification"
-  assert_contains "$install_plan" "ocw-0.7.0-alpha.tar.gz"
+  assert_contains "$install_plan" "ocw-0.7.1-alpha.tar.gz"
 
   formula="$TMP_ROOT/ocw.rb"
-  "$OCW" homebrew formula --version 0.7.0-alpha --sha256 "$(printf 'a%.0s' {1..64})" --out "$formula" >/dev/null
+  "$OCW" homebrew formula --version 0.7.1-alpha --sha256 "$(printf 'a%.0s' {1..64})" --out "$formula" >/dev/null
   assert_file "$formula"
   assert_contains "$formula" "class Ocw < Formula"
   assert_contains "$formula" "sha256 \"aaaaaaaa"
   assert_not_contains "$formula" "depends_on \"node\""
   formula_mode="$(stat -c '%a' "$formula" 2>/dev/null || stat -f '%Lp' "$formula")"
   [[ "$formula_mode" == "644" ]] || fail "expected Homebrew formula mode 644, got $formula_mode"
+
+  homebrew_ok="$TMP_ROOT/mdfind-ok"
+  cat > "$homebrew_ok" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$homebrew_ok"
+  homebrew_json="$TMP_ROOT/homebrew-doctor-ok.json"
+  OCW_BREW_BIN="$homebrew_ok" OCW_MDFIND_BIN="$homebrew_ok" "$OCW" homebrew doctor --timeout 1 --json > "$homebrew_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$homebrew_json"
+  assert_contains "$homebrew_json" '"schema_version": "ocw.homebrew.doctor.v1"'
+  assert_contains "$homebrew_json" '"overall": "ok"'
+
+  homebrew_hang="$TMP_ROOT/mdfind-hang"
+  cat > "$homebrew_hang" <<'EOF'
+#!/usr/bin/env bash
+sleep 5
+EOF
+  chmod +x "$homebrew_hang"
+  homebrew_json="$TMP_ROOT/homebrew-doctor-timeout.json"
+  set +e
+  OCW_BREW_BIN="$homebrew_ok" OCW_MDFIND_BIN="$homebrew_hang" "$OCW" homebrew doctor --timeout 1 --json > "$homebrew_json"
+  homebrew_status=$?
+  set -e
+  [[ "$homebrew_status" -ne 0 ]] || fail "expected homebrew doctor timeout to fail"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$homebrew_json"
+  assert_contains "$homebrew_json" '"overall": "issue"'
+  assert_contains "$homebrew_json" 'timed out after 1s'
 
   mcp_json="$TMP_ROOT/mcp-doctor.json"
   "$OCW" mcp doctor --json > "$mcp_json"

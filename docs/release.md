@@ -5,8 +5,8 @@ OCW release artifacts are built by GitHub Actions from a tag.
 ## Tag
 
 ```bash
-git tag -s v0.7.0-alpha -m "v0.7.0-alpha"
-git push origin v0.7.0-alpha
+git tag -s v0.7.1-alpha -m "v0.7.1-alpha"
+git push origin v0.7.1-alpha
 ```
 
 The release workflow runs `scripts/release-check.sh`, publishes the tarball and checksum, and creates GitHub artifact attestations.
@@ -14,9 +14,9 @@ The release workflow runs `scripts/release-check.sh`, publishes the tarball and 
 ## Verify
 
 ```bash
-gh release download v0.7.0-alpha -R BenitoJD/OCW-CLI -p 'ocw-0.7.0-alpha.tar.gz*'
-shasum -a 256 -c ocw-0.7.0-alpha.tar.gz.sha256
-gh attestation verify ocw-0.7.0-alpha.tar.gz --repo BenitoJD/OCW-CLI
+gh release download v0.7.1-alpha -R BenitoJD/OCW-CLI -p 'ocw-0.7.1-alpha.tar.gz*'
+shasum -a 256 -c ocw-0.7.1-alpha.tar.gz.sha256
+gh attestation verify ocw-0.7.1-alpha.tar.gz --repo BenitoJD/OCW-CLI
 ```
 
 ## Install
@@ -47,6 +47,14 @@ Users install from the tap with:
 ```bash
 brew install BenitoJD/ocw/ocw
 ```
+
+If Homebrew hangs after printing formula metadata on macOS, check local Xcode/Spotlight discovery:
+
+```bash
+ocw homebrew doctor
+```
+
+The verified release installer remains the fallback when local Homebrew is unhealthy.
 
 ## Docs site
 
