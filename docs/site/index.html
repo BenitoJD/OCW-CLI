@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OCW CLI</title>
+    <meta name="description" content="OpenCode Go workers for Codex-style orchestration.">
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f4;
+        --panel: #ffffff;
+        --text: #171717;
+        --muted: #5f6368;
+        --line: #d7d7cf;
+        --accent: #0f766e;
+        --code: #111827;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101418;
+          --panel: #171c21;
+          --text: #f5f5f0;
+          --muted: #a7adb5;
+          --line: #303840;
+          --accent: #5eead4;
+          --code: #0b0f13;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+      }
+      main {
+        width: min(1040px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0 64px;
+      }
+      header {
+        display: grid;
+        gap: 24px;
+        margin-bottom: 40px;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(40px, 7vw, 76px);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 34px 0 12px;
+        font-size: 24px;
+      }
+      p {
+        max-width: 760px;
+        margin: 0 0 16px;
+      }
+      a { color: var(--accent); }
+      .lead {
+        font-size: 20px;
+        color: var(--muted);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        text-decoration: none;
+        color: var(--text);
+        background: var(--panel);
+        font-weight: 600;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 18px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--code);
+        color: #e5e7eb;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.95em;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 16px;
+      }
+      .tile {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+        background: var(--panel);
+      }
+      .tile h3 {
+        margin: 0 0 8px;
+        font-size: 17px;
+      }
+      .tile p {
+        margin: 0;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>OCW CLI</h1>
+        <p class="lead">OpenCode Go workers for Codex-style orchestration. Keep your premium agent as orchestrator and delegate bounded exploration, review, PR summaries, and patch drafts to cheaper worker models.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/BenitoJD/OCW-CLI">GitHub</a>
+          <a class="button" href="https://github.com/BenitoJD/OCW-CLI/releases">Releases</a>
+          <a class="button" href="https://github.com/BenitoJD/OCW-CLI/blob/main/docs/codex.md">Codex Setup</a>
+        </div>
+      </header>
+
+      <h2>Install</h2>
+      <pre><code>brew install BenitoJD/ocw/ocw</code></pre>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash</code></pre>
+
+      <h2>Core Flow</h2>
+      <pre><code>ocw explore "Map the auth flow"
+ocw review "Review the current diff"
+ocw --worktree patch "Draft the smallest safe fix"
+ocw apply latest --check</code></pre>
+
+      <section class="grid" aria-label="OCW capabilities">
+        <div class="tile">
+          <h3>Agent Integrations</h3>
+          <p>Codex, Claude Code, OpenCode, and MCP setup snippets are built in.</p>
+        </div>
+        <div class="tile">
+          <h3>PR Review</h3>
+          <p>Use <code>ocw pr summary</code> and <code>ocw pr review</code> to create local artifacts without posting comments.</p>
+        </div>
+        <div class="tile">
+          <h3>Safety</h3>
+          <p>Audit, manifest, support bundle, policy checks, isolated worktrees, and release attestations.</p>
+        </div>
+        <div class="tile">
+          <h3>Observability</h3>
+          <p>Trace, report, stats, eval, and deterministic gauntlet tests for confidence.</p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

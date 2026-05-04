@@ -1,8 +1,15 @@
 # ocw
 
+[![CI](https://github.com/BenitoJD/OCW-CLI/actions/workflows/ci.yml/badge.svg)](https://github.com/BenitoJD/OCW-CLI/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BenitoJD/OCW-CLI?include_prereleases)](https://github.com/BenitoJD/OCW-CLI/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/BenitoJD/OCW-CLI/badge)](https://securityscorecards.dev/viewer/?uri=github.com/BenitoJD/OCW-CLI)
+
 `ocw` is a tiny OpenCode Go worker wrapper for Codex-style orchestration.
 
 The idea is simple: keep Codex as the orchestrator and final reviewer, while using cheaper OpenCode Go models for bounded worker tasks like repo exploration, broad scans, review passes, and patch drafts.
+
+![OCW terminal demo](docs/assets/ocw-demo.svg)
 
 ## About
 
@@ -21,6 +28,14 @@ Use it when you want:
 The safety model is intentionally conservative: worker output is draft labor. Your main agent, your tests, and your code review remain the final authority.
 
 ## Install
+
+Install with Homebrew:
+
+```bash
+brew install BenitoJD/ocw/ocw
+```
+
+Or install from this repository:
 
 ```bash
 ./install.sh
@@ -47,6 +62,12 @@ Generate a Homebrew formula for a tap:
 ```bash
 make package
 ocw homebrew formula --out Formula/ocw.rb
+```
+
+Docs site source:
+
+```text
+docs/site/index.html
 ```
 
 Requirements:
@@ -573,6 +594,19 @@ git push origin v0.7.0-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.
+
+Homebrew tap release flow:
+
+```bash
+gh release download v0.7.0-alpha -R BenitoJD/OCW-CLI -p 'ocw-0.7.0-alpha.tar.gz.sha256'
+ocw homebrew formula --version 0.7.0-alpha --sha256 "$(awk '{print $1}' ocw-0.7.0-alpha.tar.gz.sha256)" --out Formula/ocw.rb
+```
+
+Roadmap:
+
+```text
+ROADMAP.md
+```
 
 ## Gitignore
 

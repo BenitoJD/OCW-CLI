@@ -3,6 +3,10 @@ description: Report a reproducible ocw problem
 title: "[Bug]: "
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, run `ocw doctor --deep` and include a sanitized support bundle when possible.
   - type: textarea
     id: what-happened
     attributes:
@@ -25,12 +29,45 @@ body:
     id: output
     attributes:
       label: Relevant output
-      description: Paste `ocw doctor`, `metadata.txt`, and a redacted summary if useful.
+      description: Paste `ocw doctor --deep`, `metadata.txt`, and redacted command output if useful. Do not paste secrets or raw private worker summaries.
       render: shell
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - GitHub release installer
+        - Repository install.sh
+        - Development checkout
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows/WSL
+        - Other
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
       label: ocw version
-      placeholder: ocw 0.1.0-alpha
+      placeholder: ocw 0.7.0-alpha
     validations:
       required: true
+  - type: input
+    id: opencode-version
+    attributes:
+      label: OpenCode version
+      placeholder: opencode version
+  - type: textarea
+    id: support-bundle
+    attributes:
+      label: Support bundle
+      description: Attach or describe `ocw support bundle --out ocw-support.tgz` if the contents are safe to share.

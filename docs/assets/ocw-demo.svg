@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">OCW terminal demo</title>
+  <desc id="desc">A terminal-style demo showing Codex delegating to OCW workers, inspecting artifacts, and applying checks.</desc>
+  <rect width="960" height="540" fill="#101418"/>
+  <rect x="32" y="28" width="896" height="484" rx="10" fill="#171c21" stroke="#2c343c"/>
+  <circle cx="58" cy="52" r="6" fill="#ef4444"/>
+  <circle cx="78" cy="52" r="6" fill="#f59e0b"/>
+  <circle cx="98" cy="52" r="6" fill="#22c55e"/>
+  <text x="122" y="58" fill="#9ca3af" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">ocw - OpenCode Go workers for orchestrator agents</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18">
+    <text x="56" y="108" fill="#d1d5db">$ ocw explore "Map the auth flow"</text>
+    <text x="56" y="142" fill="#6ee7b7">OCW output: .codex/opencode-workers/20260504-120100-explore</text>
+
+    <text x="56" y="194" fill="#d1d5db">$ ocw show latest --summary</text>
+    <text x="56" y="228" fill="#c4b5fd">Auth flow: middleware -> session loader -> route guard -> API client.</text>
+    <text x="56" y="260" fill="#c4b5fd">Files to inspect: src/auth/session.ts, src/server/middleware.ts</text>
+
+    <text x="56" y="312" fill="#d1d5db">$ ocw --worktree patch "Draft the smallest validation fix"</text>
+    <text x="56" y="346" fill="#6ee7b7">patch captured in isolated worktree; main tree unchanged</text>
+
+    <text x="56" y="398" fill="#d1d5db">$ ocw apply latest --check</text>
+    <text x="56" y="432" fill="#fcd34d">Patch can be applied. Review diff.after.patch before applying.</text>
+
+    <text x="56" y="484" fill="#93c5fd">$ ocw audit latest --json</text>
+  </g>
+</svg>

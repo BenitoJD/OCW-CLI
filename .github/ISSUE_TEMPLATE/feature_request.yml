@@ -14,9 +14,31 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: What should ocw do?
+      description: What should ocw do? Include a proposed command shape if it is a CLI feature.
+      placeholder: ocw ...
     validations:
       required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: What should be true when this feature is done?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Install/release
+        - Codex integration
+        - Claude Code integration
+        - OpenCode integration
+        - MCP
+        - PR review
+        - Patch safety
+        - Reports/evals
+        - Other
   - type: textarea
     id: alternatives
     attributes:

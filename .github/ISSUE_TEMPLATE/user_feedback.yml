@@ -1,0 +1,47 @@
+name: User feedback
+description: Share first-run feedback after trying OCW
+title: "[Feedback]: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing OCW. Please do not include secrets or private worker artifacts.
+  - type: dropdown
+    id: role
+    attributes:
+      label: Primary workflow
+      options:
+        - Codex orchestration
+        - Claude Code orchestration
+        - OpenCode-only workflow
+        - PR review
+        - Patch drafting
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands tried
+      description: Paste the OCW commands you tried.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What was confusing or slow?
+      description: Include install, docs, command names, output, or integration setup friction.
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: What was useful?
+      description: Which command or artifact helped most?
+  - type: textarea
+    id: request
+    attributes:
+      label: One thing to improve
+      description: If we fixed only one thing next, what should it be?

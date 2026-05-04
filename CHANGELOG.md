@@ -9,6 +9,7 @@ All notable changes to `ocw` are documented here.
 - Add `ocw help [command]`, typo suggestions, `ocw trace`, and `ocw mcp doctor`.
 - Add `ocw security badge` and `ocw security eval` with prompt-injection/untrusted-content eval fixtures.
 - Add Codex-specific and release-hardening documentation.
+- Add launch polish: README demo asset, roadmap, feedback plan, richer issue templates, and manual Pages docs workflow.
 - Add checksum-verifying `scripts/install-release.sh` for GitHub Release installs.
 - Add `ocw config init|path|show|validate` for project config setup and validation.
 - Add `ocw support bundle` for sanitized diagnostic tarballs that exclude worker content by default.

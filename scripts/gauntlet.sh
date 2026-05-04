@@ -104,6 +104,10 @@ install_from_package() {
   assert_file "$DIST"
   mkdir -p "$install_dir" "$extract_dir"
   tar -xzf "$DIST" -C "$extract_dir"
+  assert_file "$extract_dir/ocw-$VERSION/ROADMAP.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/feedback.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/assets/ocw-demo.svg"
+  assert_file "$extract_dir/ocw-$VERSION/docs/site/index.html"
   OCW_INSTALL_DIR="$install_dir" "$extract_dir/ocw-$VERSION/install.sh" >/dev/null
   assert_file "$install_dir/ocw"
 }

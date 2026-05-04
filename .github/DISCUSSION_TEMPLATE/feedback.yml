@@ -1,0 +1,23 @@
+title: "[Feedback]: "
+labels: ["feedback"]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow tested
+      description: Which OCW flow did you try?
+      placeholder: Codex + OCW explore/review, Claude Code MCP, PR review, patch drafting...
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Feedback
+      description: What worked, what was confusing, and what should be improved?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, install method, `ocw version`, `opencode version`.
