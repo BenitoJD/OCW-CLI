@@ -181,6 +181,88 @@ const tools = [
     }),
     annotations: { readOnlyHint: true },
   },
+  {
+    name: 'ocw_models',
+    description: 'List, sync, or benchmark OpenCode Go model routing data.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: { type: 'string', enum: ['list', 'sync', 'bench'] },
+      url: { type: 'string', description: 'Model catalog URL for sync. Supports file:// for local testing.' },
+      out: { type: 'string', description: 'Cache file for sync output.' },
+      cache: { type: 'string', description: 'Cache file for list input.' },
+      models: { type: 'string', description: 'Comma-separated models for bench.' },
+      iterations: { type: 'integer', minimum: 1, maximum: 100 },
+      agent: { type: 'string', description: 'Agent for model bench.' },
+      task: { type: 'string', description: 'Benchmark task.' },
+      promote: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'], description: 'Promote best bench result to this mode.' },
+      json: { type: 'boolean', description: 'Return JSON where supported. Defaults to true for list/sync.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
+    name: 'ocw_route',
+    description: 'Explain or set project model routes used by OCW worker modes.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: { type: 'string', enum: ['explain', 'set', 'path'] },
+      mode: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'] },
+      model: { type: 'string', description: 'Model id for set.' },
+      reason: { type: 'string', description: 'Reason stored with a route set.' },
+      json: { type: 'boolean', description: 'Return JSON for explain. Defaults to true.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
+    name: 'ocw_tournament',
+    description: 'Run several models on the same task and save a judged tournament artifact.',
+    inputSchema: schema({
+      ...commonProperties,
+      mode: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'] },
+      task: { type: 'string', minLength: 1 },
+      models: { type: 'string', description: 'Comma-separated model list.' },
+      agent: { type: 'string' },
+      judge_model: { type: 'string' },
+      judge_agent: { type: 'string' },
+      variant: { type: 'string' },
+      attach: { type: 'string' },
+    }, ['mode', 'task']),
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: 'ocw_memory',
+    description: 'Manage lightweight project memory that OCW injects into worker prompts.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: { type: 'string', enum: ['add', 'search', 'update', 'export'] },
+      key: { type: 'string' },
+      value: { type: 'string' },
+      tags: { type: 'string' },
+      query: { type: 'string' },
+      json: { type: 'boolean', description: 'Return JSON for search/export. Defaults to true for export.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
+    name: 'ocw_dashboard',
+    description: 'Generate or return an OCW dashboard summarizing recent runs, routes, and memory.',
+    inputSchema: schema({
+      ...commonProperties,
+      out: { type: 'string', description: 'HTML output path.' },
+      json: { type: 'boolean', description: 'Return JSON instead of writing HTML.' },
+    }),
+    annotations: { readOnlyHint: false },
+  },
+  {
+    name: 'ocw_mcp_audit',
+    description: 'Audit the OCW MCP server for parseability, expected tool exposure, and optional baseline SHA.',
+    inputSchema: schema({
+      ...commonProperties,
+      baseline: { type: 'string' },
+      write_baseline: { type: 'string' },
+      json: { type: 'boolean', description: 'Return JSON. Defaults to true.' },
+    }),
+    annotations: { readOnlyHint: true },
+  },
 ];
 
 const resources = [
@@ -341,7 +423,7 @@ function runOcw(ocwArgs, args) {
   const stdout = truncate(result.stdout || '', limit);
   const stderr = truncate(result.stderr || '', limit);
   const status = result.status === null ? 1 : result.status;
-  const outputDirMatch = (result.stdout || '').match(/OCW (?:output|benchmark output|batch output|eval output|PR [a-z]+ output): (.+)/);
+  const outputDirMatch = (result.stdout || '').match(/OCW (?:output|benchmark output|batch output|eval output|tournament output|PR [a-z]+ output): (.+)/);
   const errorCode = classifyError(status, result.stderr || result.stdout || '');
 
   return {
@@ -535,6 +617,127 @@ function callTool(name, args) {
 
   if (name === 'ocw_stats') {
     result = runOcw(['stats', ...assertStringArray(input.args, 'args')], input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_models') {
+    const action = assertString(input.action, 'action', true);
+    if (!['list', 'sync', 'bench'].includes(action)) {
+      throw new Error(`unsupported models action: ${action}`);
+    }
+    const ocwArgs = ['models', action];
+    if (action === 'sync') {
+      const url = assertString(input.url, 'url');
+      const out = assertString(input.out, 'out');
+      if (url) ocwArgs.push('--url', url);
+      if (out) ocwArgs.push('--out', out);
+      if (input.json !== false) ocwArgs.push('--json');
+    } else if (action === 'list') {
+      const cache = assertString(input.cache, 'cache');
+      if (cache) ocwArgs.push('--cache', cache);
+      if (input.json !== false) ocwArgs.push('--json');
+    } else {
+      const models = assertString(input.models, 'models');
+      const agent = assertString(input.agent, 'agent');
+      const task = assertString(input.task, 'task');
+      const promote = assertString(input.promote, 'promote');
+      if (models) ocwArgs.push('--models', models);
+      if (agent) ocwArgs.push('--agent', agent);
+      if (task) ocwArgs.push('--task', task);
+      if (promote) ocwArgs.push('--promote', promote);
+      if (input.iterations !== undefined && input.iterations !== null) {
+        if (!Number.isInteger(input.iterations) || input.iterations < 1 || input.iterations > 100) {
+          throw new Error('iterations must be an integer between 1 and 100');
+        }
+        ocwArgs.push('--iterations', String(input.iterations));
+      }
+    }
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_route') {
+    const action = assertString(input.action, 'action', true);
+    if (!['explain', 'set', 'path'].includes(action)) {
+      throw new Error(`unsupported route action: ${action}`);
+    }
+    const ocwArgs = ['route', action];
+    const mode = assertString(input.mode, 'mode');
+    if (action === 'set') {
+      const model = assertString(input.model, 'model', true);
+      if (!mode) throw new Error('mode is required for route set');
+      ocwArgs.push(mode, model);
+      const reason = assertString(input.reason, 'reason');
+      if (reason) ocwArgs.push('--reason', reason);
+    } else if (action === 'explain') {
+      if (mode) ocwArgs.push(mode);
+      if (input.json !== false) ocwArgs.push('--json');
+    }
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_tournament') {
+    const mode = assertString(input.mode, 'mode', true);
+    const task = assertString(input.task, 'task', true);
+    const ocwArgs = ['tournament', mode];
+    const flags = [
+      ['models', '--models'],
+      ['agent', '--agent'],
+      ['judge_model', '--judge-model'],
+      ['judge_agent', '--judge-agent'],
+      ['variant', '--variant'],
+      ['attach', '--attach'],
+    ];
+    for (const [key, flag] of flags) {
+      const value = assertString(input[key], key);
+      if (value) ocwArgs.push(flag, value);
+    }
+    ocwArgs.push(task);
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_memory') {
+    const action = assertString(input.action, 'action', true);
+    if (!['add', 'search', 'update', 'export'].includes(action)) {
+      throw new Error(`unsupported memory action: ${action}`);
+    }
+    const ocwArgs = ['memory', action];
+    if (action === 'add') {
+      const key = assertString(input.key, 'key', true);
+      const value = assertString(input.value, 'value', true);
+      ocwArgs.push(key, value);
+      const tags = assertString(input.tags, 'tags');
+      if (tags) ocwArgs.push('--tags', tags);
+    } else if (action === 'search') {
+      const query = assertString(input.query, 'query');
+      if (query) ocwArgs.push(query);
+      if (assertBoolean(input.json, 'json')) ocwArgs.push('--json');
+    } else if (action === 'export') {
+      if (input.json !== false) ocwArgs.push('--json');
+    }
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_dashboard') {
+    const ocwArgs = ['dashboard'];
+    const out = assertString(input.out, 'out');
+    if (out) ocwArgs.push('--out', out);
+    if (assertBoolean(input.json, 'json')) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_mcp_audit') {
+    const ocwArgs = ['mcp', 'audit'];
+    if (input.json !== false) ocwArgs.push('--json');
+    const baseline = assertString(input.baseline, 'baseline');
+    const writeBaseline = assertString(input.write_baseline, 'write_baseline');
+    if (baseline) ocwArgs.push('--baseline', baseline);
+    if (writeBaseline) ocwArgs.push('--write-baseline', writeBaseline);
+    result = runOcw(ocwArgs, input);
     return toolResponse(name, result);
   }
 

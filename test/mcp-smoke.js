@@ -114,14 +114,20 @@ function createClient(repo) {
       'ocw_apply',
       'ocw_apply_check',
       'ocw_audit',
+      'ocw_dashboard',
       'ocw_doctor',
       'ocw_eval',
       'ocw_last',
       'ocw_manifest',
+      'ocw_mcp_audit',
+      'ocw_memory',
+      'ocw_models',
       'ocw_report',
+      'ocw_route',
       'ocw_run',
       'ocw_show',
       'ocw_stats',
+      'ocw_tournament',
     ].sort());
 
     const common = { cwd: repo, output_root: '.out' };
@@ -180,6 +186,65 @@ function createClient(repo) {
     });
     assert.equal(audit.structuredContent.status, 0);
     assert.match(audit.structuredContent.stdout, /"overall": "ok"/);
+
+    fs.writeFileSync(path.join(repo, 'models.json'), JSON.stringify({ models: [{ id: 'opencode-go/mcp-a' }, { id: 'opencode-go/mcp-b' }] }));
+    const modelsSync = await client.request('tools/call', {
+      name: 'ocw_models',
+      arguments: { ...common, action: 'sync', url: `file://${path.join(repo, 'models.json')}`, out: '.codex/models.json' },
+    });
+    assert.equal(modelsSync.structuredContent.status, 0);
+    assert.match(modelsSync.structuredContent.stdout, /ocw\.models\.sync\.v1/);
+
+    const routeSet = await client.request('tools/call', {
+      name: 'ocw_route',
+      arguments: { ...common, action: 'set', mode: 'cheap', model: 'opencode-go/mcp-a', reason: 'mcp smoke' },
+    });
+    assert.equal(routeSet.structuredContent.status, 0);
+    const routeExplain = await client.request('tools/call', {
+      name: 'ocw_route',
+      arguments: { ...common, action: 'explain', mode: 'cheap' },
+    });
+    assert.equal(routeExplain.structuredContent.status, 0);
+    assert.match(routeExplain.structuredContent.stdout, /opencode-go\/mcp-a/);
+
+    const memoryAdd = await client.request('tools/call', {
+      name: 'ocw_memory',
+      arguments: { ...common, action: 'add', key: 'mcp', value: 'structured tools are available', tags: 'test' },
+    });
+    assert.equal(memoryAdd.structuredContent.status, 0);
+    const memoryExport = await client.request('tools/call', {
+      name: 'ocw_memory',
+      arguments: { ...common, action: 'export' },
+    });
+    assert.equal(memoryExport.structuredContent.status, 0);
+    assert.match(memoryExport.structuredContent.stdout, /ocw\.memory\.v1/);
+
+    const dashboard = await client.request('tools/call', {
+      name: 'ocw_dashboard',
+      arguments: { ...common, json: true },
+    });
+    assert.equal(dashboard.structuredContent.status, 0);
+    assert.match(dashboard.structuredContent.stdout, /ocw\.dashboard\.v1/);
+
+    const tournament = await client.request('tools/call', {
+      name: 'ocw_tournament',
+      arguments: {
+        ...common,
+        mode: 'cheap',
+        task: 'MCP tournament smoke',
+        models: 'opencode-go/mcp-a,opencode-go/mcp-b',
+        judge_model: 'opencode-go/mcp-b',
+      },
+    });
+    assert.equal(tournament.structuredContent.status, 0);
+    assert.match(tournament.structuredContent.output_dir, /tournament$/);
+
+    const mcpAudit = await client.request('tools/call', {
+      name: 'ocw_mcp_audit',
+      arguments: { ...common },
+    });
+    assert.equal(mcpAudit.structuredContent.status, 0);
+    assert.match(mcpAudit.structuredContent.stdout, /ocw\.mcp\.audit\.v1/);
 
     const resources = await client.request('resources/list', {});
     assert.ok(resources.resources.some((resource) => resource.uri === 'ocw://latest/summary'));

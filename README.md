@@ -174,6 +174,24 @@ Run a small model benchmark:
 ocw bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2
 ```
 
+Sync/list OpenCode Go models and promote benchmark winners into project routes:
+
+```bash
+ocw models sync
+ocw models list
+ocw models bench --iterations 2 --promote review
+ocw route explain --json
+ocw route set cheap opencode-go/qwen3.5-plus --reason "fast default"
+```
+
+Run a model tournament when quality matters more than the cheapest single pass:
+
+```bash
+ocw tournament review --models opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6 "Review this architecture change"
+ocw show latest --summary
+ocw audit latest
+```
+
 Run several worker tasks from one file:
 
 ```bash
@@ -196,6 +214,13 @@ EOF
 
 ocw eval eval.ocw --iterations 2
 ocw audit latest
+```
+
+Generate a starter eval for the current repo:
+
+```bash
+ocw eval generate
+ocw eval .codex/ocw-eval.ocw
 ```
 
 Review a GitHub PR without posting anything:
@@ -237,6 +262,22 @@ Add a project policy gate:
 ```bash
 ocw policy init strict
 ocw policy check latest
+```
+
+Install agent/client helpers for Codex, Claude Code, OpenCode, and GitHub Copilot:
+
+```bash
+ocw hooks install all
+ocw copilot doctor
+ocw mcp audit
+```
+
+Store lightweight project memory and generate a local dashboard:
+
+```bash
+ocw memory add test_command "make test" --tags tests
+ocw memory search tests
+ocw dashboard
 ```
 
 Install a GitHub CLI wrapper:

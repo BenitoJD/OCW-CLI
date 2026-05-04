@@ -30,9 +30,13 @@ Bootstrap a project:
 
 ```bash
 ocw init
+ocw hooks install all
+ocw mcp-config all
 ```
 
 This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want project files.
+
+`ocw hooks install all` adds project-local helper files for Codex-style post-task audits, Claude Code hooks, GitHub Copilot custom instructions/prompts/agents, and OpenCode commands. Existing files are kept unless you pass `--force`.
 
 Install project-local skills too:
 
@@ -185,6 +189,13 @@ For a reusable Codex skill instead of per-project instructions:
 ./scripts/install-skills.sh codex
 ```
 
+For structured tools instead of shell strings:
+
+```bash
+ocw mcp-config codex
+ocw mcp audit
+```
+
 ### Recommended Codex Rules
 
 - Prefer `ocw explore`, `ocw cheap`, `ocw scan`, and `ocw review` before `ocw patch`.
@@ -200,6 +211,7 @@ Install the OpenCode-native agent pack:
 
 ```bash
 ocw agent-pack install
+ocw hooks install opencode
 ```
 
 This creates markdown agents in `.opencode/agents/`:
@@ -218,6 +230,62 @@ The generated agents follow OpenCode's markdown agent format: YAML frontmatter d
 ## Claude Code
 
 Claude Code can use `ocw` the same way: call it from the shell, inspect the saved output, and treat OpenCode worker output as draft material.
+
+Install Claude Code helpers:
+
+```bash
+ocw hooks install claude
+ocw mcp-config claude
+```
+
+## GitHub Copilot
+
+Install Copilot custom instructions, prompt, and agent files:
+
+```bash
+ocw copilot install
+ocw copilot doctor
+```
+
+This writes:
+
+```text
+.github/copilot-instructions.md
+.github/prompts/ocw-pr-review.prompt.md
+.github/agents/ocw-reviewer.agent.md
+```
+
+Use the generated prompt when you want Copilot to run `ocw pr review <PR>` and inspect the local artifact before writing a final review.
+
+## MCP Tools
+
+Start the MCP server with:
+
+```bash
+ocw mcp
+```
+
+Available tools include:
+
+```text
+ocw_run
+ocw_last
+ocw_show
+ocw_manifest
+ocw_audit
+ocw_report
+ocw_eval
+ocw_doctor
+ocw_apply_check
+ocw_apply
+ocw_stats
+ocw_models
+ocw_route
+ocw_tournament
+ocw_memory
+ocw_dashboard
+ocw_mcp_audit
+```
 
 ### Quick Prompt
 

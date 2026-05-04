@@ -142,6 +142,13 @@ negative_matrix() {
     "$ocw" config --help >/dev/null
     "$ocw" apply --help >/dev/null
     "$ocw" clean --help >/dev/null
+    "$ocw" models --help >/dev/null
+    "$ocw" route --help >/dev/null
+    "$ocw" tournament --help >/dev/null
+    "$ocw" hooks --help >/dev/null
+    "$ocw" memory --help >/dev/null
+    "$ocw" dashboard --help >/dev/null
+    "$ocw" copilot --help >/dev/null
     "$ocw" agent-pack --help >/dev/null
     "$ocw" agents --help >/dev/null
     "$ocw" eval --help >/dev/null
@@ -155,6 +162,7 @@ negative_matrix() {
     "$ocw" trace --help >/dev/null
     "$ocw" help support >/dev/null
     "$ocw" mcp doctor --json >/dev/null
+    "$ocw" mcp audit --json >/dev/null
     "$ocw" mcp-config --help >/dev/null
     "$ocw" completions bash >/dev/null
     "$ocw" completions zsh >/dev/null
@@ -270,6 +278,49 @@ TASKS
 
     OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-bench "$ocw" bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2 --task "bench task" >/dev/null
     assert_file ".out/g-bench-bench/bench.tsv"
+    cat > models.json <<'MODELS'
+{
+  "models": [
+    { "id": "opencode-go/gauntlet-a" },
+    { "id": "opencode-go/gauntlet-b" }
+  ]
+}
+MODELS
+    "$ocw" models sync --url "file://$PWD/models.json" --out ".codex/models.json" --json > "$TMP_ROOT/models-sync.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/models-sync.json"
+    "$ocw" models list --cache ".codex/models.json" > "$TMP_ROOT/models-list.txt"
+    assert_contains "$TMP_ROOT/models-list.txt" "opencode-go/gauntlet-b"
+    "$ocw" route set cheap opencode-go/gauntlet-a --reason gauntlet >/dev/null
+    "$ocw" route explain cheap --json > "$TMP_ROOT/route.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/route.json"
+    assert_contains "$TMP_ROOT/route.json" "opencode-go/gauntlet-a"
+    OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-routed "$ocw" cheap "route smoke" >/dev/null
+    assert_contains ".out/g-routed-cheap/metadata.txt" "model=opencode-go/gauntlet-a"
+    OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-modelbench "$ocw" models bench --models opencode-go/gauntlet-a,opencode-go/gauntlet-b --iterations 1 --promote review >/dev/null
+    "$ocw" route explain review > "$TMP_ROOT/route-review.txt"
+    assert_contains "$TMP_ROOT/route-review.txt" "bench g-modelbench-bench"
+    "$ocw" memory add test_command "make test" --tags tests >/dev/null
+    "$ocw" memory search tests > "$TMP_ROOT/memory.txt"
+    assert_contains "$TMP_ROOT/memory.txt" "make test"
+    "$ocw" memory export --json > "$TMP_ROOT/memory.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/memory.json"
+    OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-tournament "$ocw" tournament cheap --models opencode-go/gauntlet-a,opencode-go/gauntlet-b --judge-model opencode-go/gauntlet-b "compare candidates" >/dev/null
+    assert_file ".out/g-tournament-tournament/candidates.tsv"
+    assert_file ".out/g-tournament-tournament/decision.md"
+    "$ocw" audit .out/g-tournament-tournament > "$TMP_ROOT/tournament-audit.txt"
+    assert_contains "$TMP_ROOT/tournament-audit.txt" "all tournament candidates exited 0"
+    "$ocw" dashboard --out ".codex/ocw-dashboard.html" >/dev/null
+    assert_file ".codex/ocw-dashboard.html"
+    "$ocw" dashboard --json > "$TMP_ROOT/dashboard.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/dashboard.json"
+    "$ocw" hooks install all --force >/dev/null
+    assert_file ".codex/ocw-hooks/post-task.sh"
+    assert_file ".claude/settings.json"
+    assert_file ".github/copilot-instructions.md"
+    assert_file ".github/prompts/ocw-pr-review.prompt.md"
+    assert_file ".github/agents/ocw-reviewer.agent.md"
+    assert_file ".opencode/commands/ocw-review.md"
+    "$ocw" copilot doctor >/dev/null
 
     cat > eval.ocw <<'EVALS'
 cheap|Return MOCK_OK for eval|MOCK_OK
@@ -277,7 +328,9 @@ review|Return MOCK_OK for review eval|MOCK_OK
 EVALS
     OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-eval "$ocw" eval eval.ocw --iterations 1 >/dev/null
     assert_file ".out/g-eval-eval/eval.tsv"
-    "$ocw" audit latest > "$TMP_ROOT/eval-audit.txt"
+    "$ocw" eval generate --out ".codex/generated.ocw" --force >/dev/null
+    assert_file ".codex/generated.ocw"
+    "$ocw" audit .out/g-eval-eval > "$TMP_ROOT/eval-audit.txt"
     assert_contains "$TMP_ROOT/eval-audit.txt" "all eval expectations are present"
 
     "$ocw" report latest --json --out reports/latest.json >/dev/null

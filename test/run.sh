@@ -90,7 +90,7 @@ test_help_and_doctor() {
   "$OCW" help config >/dev/null
   "$OCW" help mcp >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.7.1-alpha' <<< "$output"
+  grep -Fq 'ocw 0.8.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -687,6 +687,99 @@ EOF
   assert_contains ".github/workflows/scorecard.yml" "actions/checkout@v6"
 }
 
+test_world_class_workflows() {
+  local repo="$TMP_ROOT/world-class"
+  local models_json models_out route_json memory_json dashboard_json audit_json audit_output eval_file
+  make_repo "$repo"
+  cd "$repo"
+
+  cat > models.json <<'EOF'
+{
+  "models": [
+    { "id": "opencode-go/test-a" },
+    { "model": "opencode-go/test-b" }
+  ]
+}
+EOF
+
+  models_json="$TMP_ROOT/models-sync.json"
+  "$OCW" models sync --url "file://$PWD/models.json" --out ".codex/models.json" --json > "$models_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$models_json"
+  assert_contains "$models_json" '"schema_version": "ocw.models.sync.v1"'
+  assert_contains "$models_json" 'opencode-go/test-a'
+
+  models_out="$TMP_ROOT/models-list.txt"
+  "$OCW" models list --cache ".codex/models.json" > "$models_out"
+  assert_contains "$models_out" "opencode-go/test-b"
+
+  "$OCW" route set cheap opencode-go/test-a --reason "unit route" >/dev/null
+  route_json="$TMP_ROOT/route.json"
+  "$OCW" route explain cheap --json > "$route_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$route_json"
+  assert_contains "$route_json" '"source": "route"'
+  assert_contains "$route_json" 'opencode-go/test-a'
+
+  OCW_TEST_STAMP="world-route" run_ocw cheap "route file should drive this worker" >/dev/null
+  assert_contains ".out/world-route-cheap/metadata.txt" "model=opencode-go/test-a"
+
+  "$OCW" memory add framework "OCW is implemented as a Bash CLI" --tags cli >/dev/null
+  "$OCW" memory search framework > "$TMP_ROOT/memory-search.txt"
+  assert_contains "$TMP_ROOT/memory-search.txt" "Bash CLI"
+  memory_json="$TMP_ROOT/memory.json"
+  "$OCW" memory export --json > "$memory_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$memory_json"
+  assert_contains "$memory_json" '"schema_version": "ocw.memory.v1"'
+
+  OCW_TEST_STAMP="world-memory" run_ocw cheap "framework" >/dev/null
+  assert_contains "mock.log" "Project memory"
+
+  OCW_TEST_STAMP="world-tournament" run_ocw tournament cheap \
+    --models opencode-go/test-a,opencode-go/test-b \
+    --judge-model opencode-go/test-b \
+    "Compare the implementation approach" >/dev/null
+  assert_file ".out/world-tournament-tournament/candidates.tsv"
+  assert_file ".out/world-tournament-tournament/decision.md"
+  assert_contains ".out/world-tournament-tournament/metadata.txt" "mode=tournament"
+  audit_output="$TMP_ROOT/tournament-audit.txt"
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit world-tournament-tournament > "$audit_output"
+  assert_contains "$audit_output" "all tournament candidates exited 0"
+
+  OCW_TEST_STAMP="world-model-bench" run_ocw models bench \
+    --models opencode-go/test-a,opencode-go/test-b \
+    --iterations 1 \
+    --promote review >/dev/null
+  "$OCW" route explain review > "$TMP_ROOT/route-review.txt"
+  assert_contains "$TMP_ROOT/route-review.txt" "bench world-model-bench-bench"
+
+  "$OCW" hooks install all --force >/dev/null
+  assert_file ".codex/ocw-hooks/post-task.sh"
+  assert_file ".claude/settings.json"
+  assert_file ".github/copilot-instructions.md"
+  assert_file ".github/prompts/ocw-pr-review.prompt.md"
+  assert_file ".github/agents/ocw-reviewer.agent.md"
+  assert_file ".opencode/commands/ocw-review.md"
+  "$OCW" copilot doctor >/dev/null
+
+  eval_file="$TMP_ROOT/generated.ocw"
+  "$OCW" eval generate --out "$eval_file" --force >/dev/null
+  assert_file "$eval_file"
+  assert_contains "$eval_file" "mode|task|expected substring"
+
+  "$OCW" dashboard --out ".codex/ocw-dashboard.html" >/dev/null
+  assert_file ".codex/ocw-dashboard.html"
+  assert_contains ".codex/ocw-dashboard.html" "OCW Dashboard"
+  dashboard_json="$TMP_ROOT/dashboard.json"
+  OCW_OUTPUT_ROOT=".out" "$OCW" dashboard --json > "$dashboard_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$dashboard_json"
+  assert_contains "$dashboard_json" '"schema_version": "ocw.dashboard.v1"'
+
+  audit_json="$TMP_ROOT/mcp-audit.json"
+  "$OCW" mcp audit --json > "$audit_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$audit_json"
+  assert_contains "$audit_json" '"schema_version": "ocw.mcp.audit.v1"'
+  assert_contains "$audit_json" '"overall": "ok"'
+}
+
 test_config_support_and_release_installer() {
   local repo="$TMP_ROOT/config-support"
   local validate_json invalid_status support_archive extract_dir install_plan formula formula_mode homebrew_ok homebrew_hang homebrew_json homebrew_status mcp_json trace_json missing_trace_json trace_status
@@ -878,6 +971,7 @@ run_test "agent pack install" test_agent_pack_install
 run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
 run_test "extended cli features" test_extended_cli_features
+run_test "world-class workflows" test_world_class_workflows
 run_test "config support and release installer" test_config_support_and_release_installer
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command

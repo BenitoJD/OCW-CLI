@@ -123,6 +123,12 @@ ocw_audit
 ocw_apply_check
 ocw_apply
 ocw_stats
+ocw_models
+ocw_route
+ocw_tournament
+ocw_memory
+ocw_dashboard
+ocw_mcp_audit
 ```
 
 Use `ocw_run` for worker delegation, `ocw_show` for saved artifacts, `ocw_manifest` for artifact inventory and checksums, `ocw_audit` before trusting worker output, `ocw_apply_check` before `ocw_apply`, and `ocw_stats` for OpenCode usage statistics.
