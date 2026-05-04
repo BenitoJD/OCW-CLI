@@ -31,7 +31,7 @@ usage() {
 ocw - OpenCode Go workers for Codex-style orchestration
 
 Usage:
-  ocw [options] <explore|review|patch|scan|cheap> <task...>
+  ocw [options] <explore|review|patch|scan|cheap> [options] <task...>
   ocw init [options]
   ocw uninstall [--bin] [--skills] [--project] [--all] [--dry-run] [--yes] [--force]
   ocw last [mode]
@@ -55,6 +55,7 @@ Usage:
   ocw version
 
 Worker options:
+  Worker options may appear before the mode or immediately after it.
   -m, --model MODEL       Override the default OpenCode Go model
   -a, --agent AGENT       Override the OpenCode agent
   -o, --out DIR           Override output directory root
@@ -466,29 +467,76 @@ is_batch_worker_run() {
   [[ -d "$root/$prefix" && "$(metadata_value "$root/$prefix/metadata.txt" "mode")" == "batch" ]]
 }
 
+natural_sort_key() {
+  awk '
+    {
+      value = $0
+      key = ""
+      while (match(value, /[0-9]+/)) {
+        key = key substr(value, 1, RSTART - 1) sprintf("%020d", substr(value, RSTART, RLENGTH) + 0)
+        value = substr(value, RSTART + RLENGTH)
+      }
+      print key value
+    }
+  ' <<EOF
+$1
+EOF
+}
+
+run_sort_line() {
+  local dir="$1"
+  local created base key
+
+  created="$(metadata_value "$dir/metadata.txt" "created_at")"
+  [[ -n "$created" ]] || created="0000-00-00T00:00:00Z"
+  base="$(basename "$dir")"
+  key="$(natural_sort_key "$base")"
+  printf '%s\t%s\t%s\n' "$created" "$key" "$dir"
+}
+
 latest_run_dir() {
   local root="$1"
   local mode="${2:-}"
   local latest
-  local candidate
+  local candidate candidate_mode lines
 
   [[ -d "$root" ]] || die "output root not found: $root"
 
-  latest=""
+  lines=""
   if [[ -n "$mode" ]]; then
-    latest="$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "*-$mode*" -print | sort | tail -n 1)"
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+      [[ -n "$candidate" ]] || continue
+      candidate_mode="$(metadata_value "$candidate/metadata.txt" "mode")"
+      if [[ -n "$candidate_mode" ]]; then
+        [[ "$candidate_mode" == "$mode" ]] || continue
+      else
+        case "$(basename "$candidate")" in
+          *-"$mode"|*-"$mode"-[0-9]*)
+            ;;
+          *)
+            continue
+            ;;
+        esac
+      fi
+      lines="${lines}$(run_sort_line "$candidate")
+"
+    done <<EOF
+$(find "$root" -mindepth 1 -maxdepth 1 -type d -print)
+EOF
   else
     while IFS= read -r candidate || [[ -n "$candidate" ]]; do
       [[ -n "$candidate" ]] || continue
       if is_batch_worker_run "$root" "$candidate"; then
         continue
       fi
-      latest="$candidate"
+      lines="${lines}$(run_sort_line "$candidate")
+"
     done <<EOF
-$(find "$root" -mindepth 1 -maxdepth 1 -type d -print | sort)
+$(find "$root" -mindepth 1 -maxdepth 1 -type d -print)
 EOF
   fi
 
+  latest="$(printf '%s' "$lines" | sort | tail -n 1 | cut -f3-)"
   [[ -n "$latest" ]] || die "no OCW runs found in $root"
   abs_existing_dir "$latest"
 }
@@ -2897,6 +2945,92 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$mode" ]] || die "missing mode"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -m|--model)
+      [[ $# -ge 2 ]] || die "--model requires a value"
+      model="$2"
+      shift 2
+      ;;
+    -a|--agent)
+      [[ $# -ge 2 ]] || die "--agent requires a value"
+      agent="$2"
+      shift 2
+      ;;
+    -o|--out)
+      [[ $# -ge 2 ]] || die "--out requires a value"
+      out_base="$2"
+      shift 2
+      ;;
+    --variant)
+      [[ $# -ge 2 ]] || die "--variant requires a value"
+      variant="$2"
+      shift 2
+      ;;
+    --attach)
+      [[ $# -ge 2 ]] || die "--attach requires a value"
+      attach_url="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || die "--file requires a value"
+      files+=("$2")
+      shift 2
+      ;;
+    --auto-approve)
+      auto_approve=1
+      shift
+      ;;
+    --no-auto-approve)
+      auto_approve=0
+      shift
+      ;;
+    --require-clean)
+      require_clean=1
+      shift
+      ;;
+    --no-require-clean)
+      require_clean=0
+      shift
+      ;;
+    --worktree)
+      use_worktree=1
+      worktree_flag_set=1
+      shift
+      ;;
+    --no-worktree)
+      use_worktree=0
+      worktree_flag_set=1
+      shift
+      ;;
+    --rm-worktree)
+      remove_worktree=1
+      remove_worktree_flag_set=1
+      shift
+      ;;
+    --keep-worktree)
+      remove_worktree=0
+      remove_worktree_flag_set=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option after mode: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 [[ $# -gt 0 ]] || die "missing task"
 
 task="$*"

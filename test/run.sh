@@ -131,6 +131,21 @@ test_overrides_and_summary() {
   assert_contains ".out/override-cheap/metadata.txt" "auto_approve=1"
   assert_contains ".out/override-cheap/summary.md" "MOCK_OK model=opencode-go/minimax-m2.7"
   assert_contains "mock.log" "files=attached.txt"
+
+  OCW_TEST_STAMP="mode-first" run_ocw \
+    cheap \
+    --model opencode-go/deepseek-v4-flash \
+    --agent build \
+    --variant low \
+    --file attached.txt \
+    --auto-approve \
+    --out ".modeout" \
+    "mode-first override route" >/dev/null
+
+  assert_contains ".modeout/mode-first-cheap/metadata.txt" "model=opencode-go/deepseek-v4-flash"
+  assert_contains ".modeout/mode-first-cheap/metadata.txt" "agent=build"
+  assert_contains ".modeout/mode-first-cheap/metadata.txt" "variant=low"
+  assert_contains ".modeout/mode-first-cheap/metadata.txt" "auto_approve=1"
 }
 
 test_config_routing_and_attach() {
@@ -204,14 +219,21 @@ test_exit_code_capture() {
 
 test_output_collision() {
   local repo="$TMP_ROOT/collision"
+  local i latest
   make_repo "$repo"
   cd "$repo"
 
   OCW_TEST_STAMP="same" run_ocw cheap "first" >/dev/null
   OCW_TEST_STAMP="same" run_ocw cheap "second" >/dev/null
+  for i in $(seq 3 12); do
+    OCW_TEST_STAMP="same" run_ocw cheap "collision $i" >/dev/null
+  done
 
   assert_dir ".out/same-cheap"
   assert_dir ".out/same-cheap-1"
+  assert_dir ".out/same-cheap-11"
+  latest="$(OCW_OUTPUT_ROOT=".out" "$OCW" last cheap)"
+  [[ "$(basename "$latest")" == "same-cheap-11" ]] || fail "unexpected collision latest: $latest"
 }
 
 test_worktree_patch_isolation() {
@@ -351,6 +373,13 @@ test_last_show_clean() {
   summary="$TMP_ROOT/show-summary.txt"
   OCW_OUTPUT_ROOT=".out" "$OCW" show latest --summary > "$summary"
   assert_contains "$summary" "MOCK_OK model=opencode-go/deepseek-v4-pro"
+
+  OCW_TEST_STAMP="c" run_ocw pr review 123 --repo owner/repo >/dev/null
+  latest="$(OCW_OUTPUT_ROOT=".out" "$OCW" last)"
+  [[ "$(basename "$latest")" == "c-pr-review" ]] || fail "unexpected latest after pr review: $latest"
+
+  latest="$(OCW_OUTPUT_ROOT=".out" "$OCW" last review)"
+  [[ "$(basename "$latest")" == "b-review" ]] || fail "expected worker review latest, got $latest"
 
   clean_list="$TMP_ROOT/clean-list.txt"
   OCW_OUTPUT_ROOT=".out" "$OCW" clean --all --dry-run > "$clean_list"

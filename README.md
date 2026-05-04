@@ -87,6 +87,7 @@ Override anything:
 
 ```bash
 ocw --model opencode-go/minimax-m2.7 --agent build cheap "Try a second opinion"
+ocw cheap --model opencode-go/minimax-m2.7 --agent build "Same override, mode first"
 ocw --variant high explore "Map the API flow"
 ocw --attach http://localhost:4096 scan "Map the billing flow"
 ocw --file ./notes.md review "Review this plan"
