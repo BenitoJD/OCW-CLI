@@ -21,6 +21,7 @@ Install:
 Verify:
 
 ```bash
+ocw quickstart
 ocw doctor
 ocw doctor --deep
 ocw models
@@ -31,6 +32,7 @@ Bootstrap a project:
 ```bash
 ocw init
 ocw hooks install all
+ocw setup all
 ocw mcp-config all
 ```
 
@@ -263,6 +265,14 @@ Start the MCP server with:
 
 ```bash
 ocw mcp
+```
+
+Audit and baseline the server:
+
+```bash
+ocw mcp audit
+ocw mcp audit --write-baseline .codex/ocw-mcp.sha256
+ocw mcp audit --baseline .codex/ocw-mcp.sha256
 ```
 
 Available tools include:

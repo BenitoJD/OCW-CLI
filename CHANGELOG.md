@@ -5,6 +5,8 @@ All notable changes to `ocw` are documented here.
 ## 0.8.0-alpha
 
 - Add `ocw models sync|list|bench` for OpenCode Go catalog caching, model listing, benchmark reuse, and route promotion.
+- Add timeout and structured error-code hardening for model catalog sync and PR fetching.
+- Add `ocw quickstart`, `ocw setup`, and `ocw explain` for clearer first-run and artifact inspection UX.
 - Add `ocw route explain|set` so projects can persist smart model routes without editing config by hand.
 - Add `ocw tournament` to run several worker models on the same task and save a judged decision artifact.
 - Add `ocw memory add|search|update|export` and inject matching memory into worker prompts.
@@ -12,7 +14,8 @@ All notable changes to `ocw` are documented here.
 - Add `ocw dashboard` for a local HTML/JSON run dashboard.
 - Add `ocw eval generate` to create a starter eval file for a repository.
 - Add `ocw mcp audit` and expand the MCP server with structured tools for models, routes, tournaments, memory, dashboard, and MCP audit.
-- Expand CLI and MCP smoke tests across the new workflows.
+- Add threat model, MCP security, signed-release verification, and team policy documentation.
+- Expand CLI, hardening, packaged gauntlet, and MCP smoke tests across the new workflows.
 
 ## 0.7.1-alpha
 

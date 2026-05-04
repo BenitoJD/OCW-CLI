@@ -87,10 +87,12 @@ Requirements:
 Check your setup:
 
 ```bash
+ocw quickstart
 ocw doctor
 ocw doctor --deep
 ocw doctor --deep --json
 ocw doctor --fix
+ocw setup all
 ```
 
 Uninstall:
@@ -237,6 +239,7 @@ Inspect worker artifacts:
 
 ```bash
 ocw last
+ocw explain latest
 ocw show latest --summary
 ocw show latest --diff
 ocw manifest latest --json
@@ -278,6 +281,15 @@ Store lightweight project memory and generate a local dashboard:
 ocw memory add test_command "make test" --tags tests
 ocw memory search tests
 ocw dashboard
+```
+
+Hardening and trust docs:
+
+```text
+docs/threat-model.md
+docs/mcp-security.md
+docs/release-verification.md
+docs/team-policy.md
 ```
 
 Install a GitHub CLI wrapper:

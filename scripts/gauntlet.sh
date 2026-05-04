@@ -107,6 +107,10 @@ install_from_package() {
   assert_file "$extract_dir/ocw-$VERSION/ROADMAP.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/feedback.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/troubleshooting.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/threat-model.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/mcp-security.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/release-verification.md"
+  assert_file "$extract_dir/ocw-$VERSION/docs/team-policy.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/assets/ocw-demo.svg"
   assert_file "$extract_dir/ocw-$VERSION/docs/site/index.html"
   OCW_INSTALL_DIR="$install_dir" "$extract_dir/ocw-$VERSION/install.sh" >/dev/null
@@ -142,6 +146,8 @@ negative_matrix() {
     "$ocw" config --help >/dev/null
     "$ocw" apply --help >/dev/null
     "$ocw" clean --help >/dev/null
+    "$ocw" quickstart --help >/dev/null
+    "$ocw" setup --help >/dev/null
     "$ocw" models --help >/dev/null
     "$ocw" route --help >/dev/null
     "$ocw" tournament --help >/dev/null
@@ -160,6 +166,7 @@ negative_matrix() {
     "$ocw" security --help >/dev/null
     "$ocw" support --help >/dev/null
     "$ocw" trace --help >/dev/null
+    "$ocw" explain --help >/dev/null
     "$ocw" help support >/dev/null
     "$ocw" mcp doctor --json >/dev/null
     "$ocw" mcp audit --json >/dev/null
@@ -168,6 +175,7 @@ negative_matrix() {
     "$ocw" completions zsh >/dev/null
     "$ocw" completions fish >/dev/null
     OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$ocw" models >/dev/null
+    "$ocw" quickstart --json >/dev/null
 
     expect_fail "$ocw" cheap
     expect_fail "$ocw" --unknown cheap task
@@ -278,6 +286,8 @@ TASKS
 
     OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-bench "$ocw" bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2 --task "bench task" >/dev/null
     assert_file ".out/g-bench-bench/bench.tsv"
+    "$ocw" explain .out/g-bench-bench --json > "$TMP_ROOT/explain-bench.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/explain-bench.json"
     cat > models.json <<'MODELS'
 {
   "models": [
@@ -314,6 +324,8 @@ MODELS
     "$ocw" dashboard --json > "$TMP_ROOT/dashboard.json"
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/dashboard.json"
     "$ocw" hooks install all --force >/dev/null
+    "$ocw" setup all --force --project-skills --json > "$TMP_ROOT/setup.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/setup.json"
     assert_file ".codex/ocw-hooks/post-task.sh"
     assert_file ".claude/settings.json"
     assert_file ".github/copilot-instructions.md"

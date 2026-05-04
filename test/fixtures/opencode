@@ -99,6 +99,12 @@ if [[ "$prompt" == *"OCW_MOCK_FAIL"* ]]; then
   exit 7
 fi
 
+if [[ "$prompt" == *"OCW_MOCK_AUTH_FAIL"* ]]; then
+  printf '{"type":"text","part":{"text":"MOCK_AUTH_FAIL %s"}}\n' "$model"
+  printf 'mock opencode authentication failed\n' >&2
+  exit 42
+fi
+
 printf '{"type":"step_start","part":{"type":"step-start"}}\n'
 printf '{"type":"text","part":{"text":"MOCK_OK model=%s agent=%s variant=%s attach=%s format=%s auto=%s files=%s"}}\n' "$model" "$agent" "$variant" "$attach" "$format" "$auto_approve" "${files[*]:-none}"
 printf '{"type":"step_finish","part":{"type":"step-finish"}}\n'

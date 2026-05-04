@@ -6,6 +6,7 @@ DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
 DEFAULT_GO_MODELS_URL="https://opencode.ai/zen/go/v1/models"
+DEFAULT_NETWORK_TIMEOUT=20
 
 resolve_script_dir() {
   local source="${BASH_SOURCE[0]}"
@@ -45,6 +46,8 @@ Usage:
   ocw stats [opencode-stats-options...]
   ocw serve [opencode-serve-options...]
   ocw doctor [--deep] [--json] [--fix]
+  ocw quickstart [--json]
+  ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
   ocw models [opencode-models-options...]
   ocw models sync|list|bench [options]
   ocw route explain [MODE] [--json]
@@ -70,6 +73,7 @@ Usage:
   ocw security init|scorecard|policy|badge|eval [options]
   ocw support bundle [--out FILE] [--include-summary]
   ocw trace [latest|run-dir] [--json]
+  ocw explain [latest|run-dir] [--json]
   ocw mcp-config [codex|claude|opencode|all]
   ocw completions [bash|zsh|fish]
   ocw mcp [doctor|audit]
@@ -136,7 +140,7 @@ EOF
 }
 
 known_commands() {
-  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
+  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 }
 
 suggest_command_name() {
@@ -208,7 +212,7 @@ help_command() {
     version)
       printf 'Usage: ocw version\n'
       ;;
-    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|mcp-config|completions|mcp)
+    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|quickstart|setup|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|explain|mcp-config|completions|mcp)
       "$OCW_SELF" "$topic" --help
       ;;
     *)
@@ -222,12 +226,25 @@ die() {
   exit 2
 }
 
+die_code() {
+  local code="$1"
+  shift
+  printf 'ocw: [%s] %s\n' "$code" "$*" >&2
+  exit 2
+}
+
 have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
 require_command() {
   have_command "$1" || die "required command not found: $1"
+}
+
+require_command_code() {
+  local command_name="$1"
+  local error_code="$2"
+  have_command "$command_name" || die_code "$error_code" "required command not found: $command_name"
 }
 
 trim() {
@@ -598,22 +615,23 @@ now_utc() {
 models_json_ids() {
   local file="$1"
 
-  have_command node || return 1
-  node - "$file" <<'NODE'
+  have_command "$NODE_BIN" || return 1
+  "$NODE_BIN" - "$file" <<'NODE'
 const fs = require('node:fs');
 const file = process.argv[2];
 const input = JSON.parse(fs.readFileSync(file, 'utf8'));
 const ids = [];
 const seen = new Set();
 
-function add(value) {
+function add(value, forceGoProvider = false) {
   if (typeof value !== 'string') return;
   const trimmed = value.trim();
   if (!trimmed) return;
-  if (!trimmed.startsWith('opencode-go/')) return;
-  if (seen.has(trimmed)) return;
-  seen.add(trimmed);
-  ids.push(trimmed);
+  const id = trimmed.startsWith('opencode-go/') ? trimmed : (forceGoProvider && !trimmed.includes('/') ? `opencode-go/${trimmed}` : '');
+  if (!id) return;
+  if (seen.has(id)) return;
+  seen.add(id);
+  ids.push(id);
 }
 
 function walk(value) {
@@ -626,8 +644,11 @@ function walk(value) {
     return;
   }
   if (!value || typeof value !== 'object') return;
+  const ownedBy = typeof value.owned_by === 'string' ? value.owned_by.toLowerCase() : '';
+  const provider = typeof value.provider === 'string' ? value.provider.toLowerCase() : '';
+  const forceGoProvider = ownedBy === 'opencode' || ownedBy === 'opencode-go' || provider === 'opencode' || provider === 'opencode-go';
   for (const key of ['id', 'model', 'name', 'slug']) {
-    add(value[key]);
+    add(value[key], forceGoProvider);
   }
   for (const nested of ['models', 'data', 'items', 'results']) {
     if (value[nested] !== undefined) walk(value[nested]);
@@ -664,16 +685,31 @@ models_cached_csv() {
 download_models_json() {
   local url="$1"
   local out="$2"
+  local timeout="$3"
 
   case "$url" in
     file://*)
       cp "${url#file://}" "$out"
       ;;
     *)
-      require_command curl
-      curl -fsSL "$url" -o "$out"
+      require_command_code "$CURL_BIN" "missing_dependency"
+      "$CURL_BIN" -fsSL --connect-timeout "$timeout" --max-time "$timeout" "$url" -o "$out"
       ;;
   esac
+}
+
+validate_models_json_file() {
+  local file="$1"
+
+  if have_command "$NODE_BIN"; then
+    "$NODE_BIN" -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$file" >/dev/null
+    return $?
+  fi
+  if have_command jq; then
+    jq -e . "$file" >/dev/null
+    return $?
+  fi
+  return 0
 }
 
 route_builtin_model() {
@@ -3280,10 +3316,11 @@ models_command() {
   shift || true
   local subcommand="${1:-}"
   local url="${OCW_MODELS_URL:-$DEFAULT_GO_MODELS_URL}"
+  local timeout="${OCW_NETWORK_TIMEOUT:-$DEFAULT_NETWORK_TIMEOUT}"
   local out_file=""
   local cache="" json=0
   local models="" iterations=1 agent="plan" task="Reply with OCW_BENCH_OK and one concise sentence about the current repository."
-  local promote_mode="" bench_status bench_dir best_model best_reason line first
+  local promote_mode="" bench_status bench_dir best_model best_reason line first parsed_models
   local tmp
 
   case "$subcommand" in
@@ -3291,7 +3328,7 @@ models_command() {
       cat <<'EOF'
 Usage:
   ocw models [opencode-models-options...]
-  ocw models sync [--url URL] [--out FILE] [--json]
+  ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]
   ocw models list [--cache FILE] [--json]
   ocw models bench [--models CSV] [--iterations N] [--agent AGENT] [--promote MODE]
 EOF
@@ -3319,12 +3356,17 @@ EOF
             out_file="$2"
             shift 2
             ;;
+          --timeout)
+            [[ $# -ge 2 ]] || die "--timeout requires a value"
+            timeout="$2"
+            shift 2
+            ;;
           --json)
             json=1
             shift
             ;;
           -h|--help)
-            printf 'Usage: ocw models sync [--url URL] [--out FILE] [--json]\n'
+            printf 'Usage: ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]\n'
             return
             ;;
           *)
@@ -3332,12 +3374,22 @@ EOF
             ;;
         esac
       done
+      [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -gt 0 ]] || die "--timeout must be a positive integer"
       [[ -n "$out_file" ]] || out_file="$(models_cache_path)"
       ensure_parent_dir "$out_file"
       tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-models.XXXXXX")"
-      download_models_json "$url" "$tmp"
-      if have_command node; then
-        node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$tmp" >/dev/null
+      if ! download_models_json "$url" "$tmp" "$timeout"; then
+        rm -f "$tmp"
+        die_code "network_error" "failed to download model catalog from $url"
+      fi
+      if ! validate_models_json_file "$tmp"; then
+        rm -f "$tmp"
+        die_code "invalid_json" "model catalog is not valid JSON: $url"
+      fi
+      parsed_models="$(models_json_ids "$tmp" 2>/dev/null || true)"
+      if [[ -z "$parsed_models" ]]; then
+        rm -f "$tmp"
+        die_code "invalid_models_catalog" "model catalog has no opencode-go model ids: $url"
       fi
       mv "$tmp" "$out_file"
       if [[ "$json" -eq 1 ]]; then
@@ -3358,12 +3410,12 @@ EOF
           json_string "$line"
           first=0
         done <<EOF
-$(models_list_from_cache "$out_file")
+$parsed_models
 EOF
         printf '\n  ]\n}\n'
       else
         printf 'OCW models cache: %s\n' "$out_file"
-        models_list_from_cache "$out_file"
+        printf '%s\n' "$parsed_models"
       fi
       ;;
     list)
@@ -3473,7 +3525,7 @@ EOF
       cat <<'EOF'
 Usage:
   ocw models [opencode-models-options...]
-  ocw models sync [--url URL] [--out FILE] [--json]
+  ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]
   ocw models list [--cache FILE] [--json]
   ocw models bench [--models CSV] [--iterations N] [--agent AGENT] [--promote MODE]
 EOF
@@ -4412,6 +4464,280 @@ EOF
   printf 'OCW dashboard written: %s\n' "$out_file"
 }
 
+quickstart_command() {
+  local json=0
+  local node_ok opencode_ok git_ok gh_ok
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw quickstart [--json]\n'
+        return
+        ;;
+      *)
+        die "unknown quickstart option: $1"
+        ;;
+    esac
+  done
+
+  if have_command "$OPENCODE_BIN"; then opencode_ok=true; else opencode_ok=false; fi
+  if have_command "$GIT_BIN"; then git_ok=true; else git_ok=false; fi
+  if have_command "$GH_BIN"; then gh_ok=true; else gh_ok=false; fi
+  if have_command "$NODE_BIN"; then node_ok=true; else node_ok=false; fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.quickstart.v1",\n'
+    printf '  "checks": { "opencode": %s, "git": %s, "gh": %s, "node": %s },\n' "$opencode_ok" "$git_ok" "$gh_ok" "$node_ok"
+    printf '  "commands": [\n'
+    printf '    "ocw doctor --deep",\n'
+    printf '    "ocw setup all",\n'
+    printf '    "ocw models sync",\n'
+    printf '    "ocw cheap \\"Summarize this repository\\"",\n'
+    printf '    "ocw explain latest"\n'
+    printf '  ]\n'
+    printf '}\n'
+    return
+  fi
+
+  cat <<'EOF'
+OCW quickstart
+
+1. Check setup:
+   ocw doctor --deep
+
+2. Install project integrations:
+   ocw setup all
+
+3. Sync OpenCode Go model catalog:
+   ocw models sync
+
+4. Run a cheap worker:
+   ocw cheap "Summarize this repository"
+
+5. Read the friendly result:
+   ocw explain latest
+
+Useful next commands:
+   ocw route explain
+   ocw mcp audit
+   ocw policy init strict
+EOF
+}
+
+setup_command() {
+  local target="${1:-all}"
+  local force=0
+  local project_skills=0
+  local json=0
+  local log_file=""
+  local codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills}"
+  local claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills}"
+  local opencode_home_dir opencode_skills_dir
+  opencode_home_dir="$(opencode_config_home)"
+  opencode_skills_dir="${OCW_OPENCODE_SKILLS_DIR:-$opencode_home_dir/skills}"
+
+  if [[ "$target" == "--"* || "$target" == "-h" ]]; then
+    target="all"
+  else
+    shift || true
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      --project-skills) project_skills=1; shift ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills] [--json]
+
+Installs project-local instructions and client helpers for the selected agent.
+Existing files are kept unless --force is passed.
+EOF
+        return
+        ;;
+      *)
+        die "unknown setup option: $1"
+        ;;
+    esac
+  done
+
+  case "$target" in
+    codex|claude|opencode|copilot|all) ;;
+    *) die "unknown setup target: $target" ;;
+  esac
+
+  if [[ "$json" -eq 1 ]]; then
+    log_file="$(mktemp "${TMPDIR:-/tmp}/ocw-setup.XXXXXX")"
+    exec 3>&1
+    exec > "$log_file"
+  fi
+
+  case "$target" in
+    codex)
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      write_default_config ".ocw.toml" "$force"
+      copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
+      install_agent_skill "Codex" "$codex_skills_dir"
+      install_ocw_post_task_hook "$force"
+      ;;
+    claude)
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      write_default_config ".ocw.toml" "$force"
+      copy_if_needed "$OCW_HOME/examples/claude/CLAUDE.md" "CLAUDE.md" "Claude Code instructions" "$force"
+      install_agent_skill "Claude Code" "$claude_skills_dir"
+      if [[ "$project_skills" -eq 1 ]]; then
+        install_agent_skill "project Claude Code" ".claude/skills"
+      fi
+      if [[ "$force" -eq 1 ]]; then
+        hooks_command install claude --force
+      else
+        hooks_command install claude
+      fi
+      ;;
+    opencode)
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      write_default_config ".ocw.toml" "$force"
+      install_agent_skill "OpenCode" "$opencode_skills_dir"
+      if [[ "$project_skills" -eq 1 ]]; then
+        install_agent_skill "project OpenCode" ".opencode/skills"
+      fi
+      if [[ "$force" -eq 1 ]]; then
+        hooks_command install opencode --force
+      else
+        hooks_command install opencode
+      fi
+      ;;
+    copilot)
+      if [[ "$force" -eq 1 ]]; then
+        copilot_command install --force
+      else
+        copilot_command install
+      fi
+      ;;
+    all)
+      if [[ "$project_skills" -eq 1 ]]; then
+        if [[ "$force" -eq 1 ]]; then
+          init_project --project-skills --force
+        else
+          init_project --project-skills
+        fi
+      else
+        if [[ "$force" -eq 1 ]]; then
+          init_project --force
+        else
+          init_project
+        fi
+      fi
+      if [[ "$force" -eq 1 ]]; then
+        hooks_command install all --force
+      else
+        hooks_command install all
+      fi
+      ;;
+  esac
+
+  if [[ "$json" -eq 1 ]]; then
+    exec 1>&3
+    exec 3>&-
+    printf '{\n'
+    printf '  "schema_version": "ocw.setup.v1",\n'
+    printf '  "target": '
+    json_string "$target"
+    printf ',\n  "force": %s,\n  "project_skills": %s,\n  "log": ' "$force" "$project_skills"
+    json_string "$(cat "$log_file")"
+    printf '\n}\n'
+    rm -f "$log_file"
+  else
+    printf 'OCW setup complete: %s\n' "$target"
+  fi
+}
+
+explain_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local json=0
+  local root_abs run_dir metadata_file mode status model agent created_at summary audit_text audit_status
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw explain [latest|run-dir] [--json]\n'
+        return
+        ;;
+      -*)
+        die "unknown explain option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  root_abs="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root_abs" "$ref")"
+  metadata_file="$run_dir/metadata.txt"
+  mode="$(metadata_value "$metadata_file" "mode")"
+  status="$(metadata_value "$metadata_file" "status")"
+  model="$(metadata_value "$metadata_file" "model")"
+  agent="$(metadata_value "$metadata_file" "agent")"
+  created_at="$(metadata_value "$metadata_file" "created_at")"
+  summary=""
+  [[ -f "$run_dir/summary.md" ]] && summary="$(sed -n '1,80p' "$run_dir/summary.md")"
+  set +e
+  audit_text="$(audit_command "$root_abs" "$run_dir")"
+  audit_status=$?
+  set -e
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.explain.v1",\n'
+    printf '  "run_dir": '
+    json_string "$run_dir"
+    printf ',\n  "mode": '
+    json_string "$mode"
+    printf ',\n  "status": '
+    json_string "$status"
+    printf ',\n  "model": '
+    json_string "$model"
+    printf ',\n  "agent": '
+    json_string "$agent"
+    printf ',\n  "created_at": '
+    json_string "$created_at"
+    printf ',\n  "audit_status": %s,\n  "summary": ' "$audit_status"
+    json_string "$summary"
+    printf ',\n  "audit": '
+    json_string "$audit_text"
+    printf '\n}\n'
+    return "$audit_status"
+  fi
+
+  printf 'OCW explanation: %s\n\n' "$run_dir"
+  printf 'mode: %s\n' "${mode:-unknown}"
+  printf 'status: %s\n' "${status:-unknown}"
+  [[ -n "$model" ]] && printf 'model: %s\n' "$model"
+  [[ -n "$agent" ]] && printf 'agent: %s\n' "$agent"
+  [[ -n "$created_at" ]] && printf 'created_at: %s\n' "$created_at"
+  printf '\nSummary:\n'
+  printf '%s\n' "${summary:-No summary.md found.}"
+  printf '\nAudit:\n%s\n' "$audit_text"
+  printf '\nNext steps:\n'
+  printf '  ocw show %s --summary\n' "$run_dir"
+  printf '  ocw audit %s\n' "$run_dir"
+  if [[ "$mode" == "patch" ]]; then
+    printf '  ocw apply %s --check\n' "$run_dir"
+  fi
+  return "$audit_status"
+}
+
 bench_command() {
   local root="$1"
   shift
@@ -4894,12 +5220,18 @@ pr_command() {
   if [[ -n "$repo" ]]; then
     gh_repo_args=(--repo "$repo")
   fi
-  "$GH_BIN" pr view "$pr_ref" "${gh_repo_args[@]}" > "$pr_dir/pr.txt"
-  "$GH_BIN" pr diff "$pr_ref" "${gh_repo_args[@]}" --name-only > "$pr_dir/pr.files.txt"
-  "$GH_BIN" pr diff "$pr_ref" "${gh_repo_args[@]}" --patch > "$pr_dir/pr.diff.patch"
+  if ! "$GH_BIN" pr view "$pr_ref" "${gh_repo_args[@]}" > "$pr_dir/pr.txt"; then
+    die_code "gh_failed" "failed to fetch PR metadata for: $pr_ref"
+  fi
+  if ! "$GH_BIN" pr diff "$pr_ref" "${gh_repo_args[@]}" --name-only > "$pr_dir/pr.files.txt"; then
+    die_code "gh_failed" "failed to fetch PR file list for: $pr_ref"
+  fi
+  if ! "$GH_BIN" pr diff "$pr_ref" "${gh_repo_args[@]}" --patch > "$pr_dir/pr.diff.patch"; then
+    die_code "gh_failed" "failed to fetch PR diff for: $pr_ref"
+  fi
 
   if [[ ! -s "$pr_dir/pr.diff.patch" ]]; then
-    die "PR diff is empty for: $pr_ref"
+    die_code "empty_pr_diff" "PR diff is empty for: $pr_ref"
   fi
 
   if [[ "$action" == "summary" ]]; then
@@ -5575,8 +5907,8 @@ EOF
     else
       printf 'gh: missing\n'
     fi
-    if have_command node; then
-      printf 'node: %s\n' "$(node --version 2>/dev/null || true)"
+    if have_command "$NODE_BIN"; then
+      printf 'node: %s\n' "$("$NODE_BIN" --version 2>/dev/null || true)"
     else
       printf 'node: missing\n'
     fi
@@ -5671,8 +6003,8 @@ mcp_audit_command() {
     printf 'fail\tserver\t%s is missing\n' "$server" >> "$checks_file"
   fi
 
-  if have_command node && [[ -f "$server" ]]; then
-    if node --check "$server" >/dev/null 2>&1; then
+  if have_command "$NODE_BIN" && [[ -f "$server" ]]; then
+    if "$NODE_BIN" --check "$server" >/dev/null 2>&1; then
       printf 'ok\tnode_check\tserver parses with node --check\n' >> "$checks_file"
     else
       printf 'fail\tnode_check\tserver failed node --check\n' >> "$checks_file"
@@ -5791,9 +6123,9 @@ mcp_doctor_command() {
     esac
   done
 
-  if have_command node; then
-    node_path="$(command -v node)"
-    node --check "$server" >/dev/null 2>&1 || status=1
+  if have_command "$NODE_BIN"; then
+    node_path="$(command -v "$NODE_BIN" 2>/dev/null || printf '%s' "$NODE_BIN")"
+    "$NODE_BIN" --check "$server" >/dev/null 2>&1 || status=1
   else
     status=1
   fi
@@ -5902,7 +6234,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall config last show manifest audit apply clean stats serve doctor models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
+  commands="init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -5924,6 +6256,10 @@ _ocw()
       ;;
     config)
       COMPREPLY=( $(compgen -W "init path show validate" -- "$cur") )
+      return 0
+      ;;
+    setup)
+      COMPREPLY=( $(compgen -W "codex claude opencode copilot all" -- "$cur") )
       return 0
       ;;
     models)
@@ -5983,8 +6319,8 @@ _ocw() {
   local -a commands modes
   commands=(
     init uninstall config last show manifest audit apply clean stats serve doctor models
-    route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension security
-    homebrew support trace mcp-config completions mcp help version
+    quickstart setup route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension security
+    homebrew support trace explain mcp-config completions mcp help version
   )
   modes=(cheap explore scan review patch)
 
@@ -6003,6 +6339,7 @@ _ocw() {
         completions) _values 'shell' bash zsh fish ;;
         pr) _values 'action' summary review ;;
         config) _values 'action' init path show validate ;;
+        setup) _values 'target' codex claude opencode copilot all ;;
         models) _values 'action' sync list bench ;;
         route) _values 'action' explain set path ;;
         hooks) _values 'action' install ;;
@@ -6024,11 +6361,12 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
+complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set path"
 complete -c ocw -n "__fish_seen_subcommand_from hooks" -f -a "install"
@@ -6064,6 +6402,8 @@ serve_command() {
 OPENCODE_BIN="${OCW_OPENCODE_BIN:-opencode}"
 GIT_BIN="${OCW_GIT_BIN:-git}"
 GH_BIN="${OCW_GH_BIN:-gh}"
+CURL_BIN="${OCW_CURL_BIN:-curl}"
+NODE_BIN="${OCW_NODE_BIN:-node}"
 OCW_SELF="${BASH_SOURCE[0]}"
 load_config
 
@@ -6146,6 +6486,16 @@ case "$1" in
   serve)
     shift
     serve_command "$@"
+    exit $?
+    ;;
+  quickstart)
+    shift
+    quickstart_command "$@"
+    exit $?
+    ;;
+  setup)
+    shift
+    setup_command "$@"
     exit $?
     ;;
   route)
@@ -6243,6 +6593,11 @@ case "$1" in
     trace_command "$out_base" "$@"
     exit $?
     ;;
+  explain)
+    shift
+    explain_command "$out_base" "$@"
+    exit $?
+    ;;
   mcp-config)
     shift
     mcp_config_command "$@"
@@ -6276,8 +6631,8 @@ case "$1" in
           ;;
       esac
     fi
-    require_command node
-    exec node "$OCW_HOME/mcp/ocw-mcp.js"
+    require_command "$NODE_BIN"
+    exec "$NODE_BIN" "$OCW_HOME/mcp/ocw-mcp.js"
     ;;
   models)
     shift

@@ -35,7 +35,7 @@ assert_not_dir() {
 assert_contains() {
   local file="$1"
   local expected="$2"
-  grep -Fq "$expected" "$file" || {
+  grep -Fq -- "$expected" "$file" || {
     say "--- $file"
     sed -n '1,160p' "$file" || true
     fail "expected '$expected' in $file"
@@ -45,7 +45,7 @@ assert_contains() {
 assert_not_contains() {
   local file="$1"
   local unexpected="$2"
-  ! grep -Fq "$unexpected" "$file" || fail "did not expect '$unexpected' in $file"
+  ! grep -Fq -- "$unexpected" "$file" || fail "did not expect '$unexpected' in $file"
 }
 
 make_repo() {
@@ -697,7 +697,8 @@ test_world_class_workflows() {
 {
   "models": [
     { "id": "opencode-go/test-a" },
-    { "model": "opencode-go/test-b" }
+    { "model": "opencode-go/test-b" },
+    { "id": "test-c", "owned_by": "opencode" }
   ]
 }
 EOF
@@ -707,6 +708,7 @@ EOF
   node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$models_json"
   assert_contains "$models_json" '"schema_version": "ocw.models.sync.v1"'
   assert_contains "$models_json" 'opencode-go/test-a'
+  assert_contains "$models_json" 'opencode-go/test-c'
 
   models_out="$TMP_ROOT/models-list.txt"
   "$OCW" models list --cache ".codex/models.json" > "$models_out"
@@ -778,6 +780,98 @@ EOF
   node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$audit_json"
   assert_contains "$audit_json" '"schema_version": "ocw.mcp.audit.v1"'
   assert_contains "$audit_json" '"overall": "ok"'
+}
+
+test_hardening_security_and_ux() {
+  local repo="$TMP_ROOT/hardening"
+  local status bad_json err_json fake_curl curl_log missing_node broken_gh quick_json setup_json explain_json
+  local codex_skills="$TMP_ROOT/hardening-codex-skills"
+  make_repo "$repo"
+  cd "$repo"
+
+  printf '{bad json\n' > bad-models.json
+  set +e
+  "$OCW" models sync --url "file://$PWD/bad-models.json" --out ".codex/bad-models.json" --json > "$TMP_ROOT/bad-models.out" 2> "$TMP_ROOT/bad-models.err"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected bad model JSON to fail"
+  assert_contains "$TMP_ROOT/bad-models.err" "[invalid_json]"
+  [[ ! -f ".codex/bad-models.json" ]] || fail "invalid model catalog was written"
+
+  set +e
+  OCW_CURL_BIN="$TMP_ROOT/missing-curl" "$OCW" models sync --url "https://example.invalid/models.json" --timeout 1 --out ".codex/models.json" > "$TMP_ROOT/missing-curl.out" 2> "$TMP_ROOT/missing-curl.err"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected missing curl to fail"
+  assert_contains "$TMP_ROOT/missing-curl.err" "[missing_dependency]"
+
+  fake_curl="$TMP_ROOT/fake-curl"
+  curl_log="$TMP_ROOT/fake-curl.log"
+  cat > "$fake_curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$OCW_FAKE_CURL_LOG"
+exit 28
+EOF
+  chmod +x "$fake_curl"
+  set +e
+  OCW_CURL_BIN="$fake_curl" OCW_FAKE_CURL_LOG="$curl_log" "$OCW" models sync --url "https://example.invalid/models.json" --timeout 7 --out ".codex/models.json" > "$TMP_ROOT/fake-curl.out" 2> "$TMP_ROOT/fake-curl.err"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected fake curl network failure"
+  assert_contains "$TMP_ROOT/fake-curl.err" "[network_error]"
+  assert_contains "$curl_log" "--max-time 7"
+  assert_contains "$curl_log" "--connect-timeout 7"
+
+  missing_node="$TMP_ROOT/missing-node"
+  set +e
+  OCW_NODE_BIN="$missing_node" "$OCW" mcp doctor --json > "$TMP_ROOT/missing-node.json"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected missing node mcp doctor to fail"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/missing-node.json"
+  assert_contains "$TMP_ROOT/missing-node.json" '"ok": false'
+
+  broken_gh="$TMP_ROOT/broken-gh"
+  cat > "$broken_gh" <<'EOF'
+#!/usr/bin/env bash
+printf 'broken gh\n' >&2
+exit 33
+EOF
+  chmod +x "$broken_gh"
+  set +e
+  OCW_GH_BIN="$broken_gh" OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT=".out" "$OCW" pr review 123 --repo owner/repo > "$TMP_ROOT/broken-gh.out" 2> "$TMP_ROOT/broken-gh.err"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected broken gh to fail"
+  assert_contains "$TMP_ROOT/broken-gh.err" "[gh_failed]"
+
+  set +e
+  OCW_TEST_STAMP="auth-fail" run_ocw cheap "OCW_MOCK_AUTH_FAIL" >/dev/null 2> "$TMP_ROOT/auth-fail.err"
+  status=$?
+  set -e
+  [[ "$status" -eq 42 ]] || fail "expected auth failure 42, got $status"
+  assert_contains ".out/auth-fail-cheap/metadata.txt" "status=42"
+  assert_contains ".out/auth-fail-cheap/summary.md" "MOCK_AUTH_FAIL"
+
+  quick_json="$TMP_ROOT/quickstart.json"
+  "$OCW" quickstart --json > "$quick_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$quick_json"
+  assert_contains "$quick_json" '"schema_version": "ocw.quickstart.v1"'
+
+  setup_json="$TMP_ROOT/setup.json"
+  OCW_CODEX_SKILLS_DIR="$codex_skills" "$OCW" setup codex --force --json > "$setup_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$setup_json"
+  assert_file "AGENTS.md"
+  assert_file ".codex/ocw-hooks/post-task.sh"
+  assert_file "$codex_skills/opencode-worker/SKILL.md"
+
+  OCW_TEST_STAMP="explain" run_ocw cheap "explain this run" >/dev/null
+  explain_json="$TMP_ROOT/explain.json"
+  OCW_OUTPUT_ROOT=".out" "$OCW" explain latest --json > "$explain_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$explain_json"
+  assert_contains "$explain_json" '"schema_version": "ocw.explain.v1"'
+  OCW_OUTPUT_ROOT=".out" "$OCW" explain latest > "$TMP_ROOT/explain.txt"
+  assert_contains "$TMP_ROOT/explain.txt" "Next steps:"
 }
 
 test_config_support_and_release_installer() {
@@ -972,6 +1066,7 @@ run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
 run_test "extended cli features" test_extended_cli_features
 run_test "world-class workflows" test_world_class_workflows
+run_test "hardening security and ux" test_hardening_security_and_ux
 run_test "config support and release installer" test_config_support_and_release_installer
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
