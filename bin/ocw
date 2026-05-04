@@ -3849,6 +3849,7 @@ EOF
   if [[ -n "$out_file" ]]; then
     mkdir -p "$(dirname "$out_file")"
     mv "$tmp" "$out_file"
+    chmod 0644 "$out_file"
     printf 'Homebrew formula written: %s\n' "$out_file"
   else
     cat "$tmp"

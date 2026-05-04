@@ -689,7 +689,7 @@ EOF
 
 test_config_support_and_release_installer() {
   local repo="$TMP_ROOT/config-support"
-  local validate_json invalid_status support_archive extract_dir install_plan formula mcp_json trace_json missing_trace_json trace_status
+  local validate_json invalid_status support_archive extract_dir install_plan formula formula_mode mcp_json trace_json missing_trace_json trace_status
   make_repo "$repo"
   cd "$repo"
 
@@ -743,6 +743,8 @@ EOF
   assert_file "$formula"
   assert_contains "$formula" "class Ocw < Formula"
   assert_contains "$formula" "sha256 \"aaaaaaaa"
+  formula_mode="$(stat -c '%a' "$formula" 2>/dev/null || stat -f '%Lp' "$formula")"
+  [[ "$formula_mode" == "644" ]] || fail "expected Homebrew formula mode 644, got $formula_mode"
 
   mcp_json="$TMP_ROOT/mcp-doctor.json"
   "$OCW" mcp doctor --json > "$mcp_json"
