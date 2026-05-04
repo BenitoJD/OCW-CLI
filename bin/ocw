@@ -3826,7 +3826,6 @@ class Ocw < Formula
   license "MIT"
 
   depends_on "git"
-  depends_on "node"
 
   def install
     libexec.install Dir["*"]
@@ -3836,6 +3835,7 @@ class Ocw < Formula
   def caveats
     <<~EOS
       OCW requires OpenCode on PATH for worker runs.
+      Install Node.js separately if you want to run: ocw mcp
       Run: ocw doctor --deep
     EOS
   end

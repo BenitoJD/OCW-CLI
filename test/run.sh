@@ -743,6 +743,7 @@ EOF
   assert_file "$formula"
   assert_contains "$formula" "class Ocw < Formula"
   assert_contains "$formula" "sha256 \"aaaaaaaa"
+  assert_not_contains "$formula" "depends_on \"node\""
   formula_mode="$(stat -c '%a' "$formula" 2>/dev/null || stat -f '%Lp' "$formula")"
   [[ "$formula_mode" == "644" ]] || fail "expected Homebrew formula mode 644, got $formula_mode"
 
