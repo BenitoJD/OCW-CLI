@@ -364,12 +364,37 @@ ocw_last
 ocw_show
 ocw_manifest
 ocw_audit
+ocw_report
+ocw_eval
+ocw_doctor
 ocw_apply_check
 ocw_apply
 ocw_stats
 ```
 
-The tools accept structured arguments such as `cwd`, `output_root`, `mode`, `task`, `ref`, and `view`, then return text plus structured command status, stdout, stderr, and artifact paths. Use `ocw_manifest` to inventory artifacts and checksums, and `ocw_audit` before trusting worker output or applying patches.
+The tools accept structured arguments such as `cwd`, `output_root`, `mode`, `task`, `ref`, and `view`, then return text plus structured command status, stdout, stderr, and artifact paths. Use `ocw_manifest` to inventory artifacts and checksums, `ocw_audit` before trusting worker output or applying patches, `ocw_report` for review artifacts, and `ocw_eval` to compare worker behavior.
+
+It also exposes resources and prompt templates:
+
+```text
+ocw://latest/summary
+ocw://latest/metadata
+ocw://latest/manifest
+ocw://latest/audit
+
+ocw-review-diff
+ocw-patch-small
+ocw-pr-review
+ocw-eval
+```
+
+For easy project setup across Codex, Claude Code, OpenCode, and Agent Skills-compatible clients:
+
+```bash
+ocw agents sync
+ocw agents doctor
+ocw agents diff
+```
 
 Print client-specific setup snippets:
 

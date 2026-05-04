@@ -2,6 +2,18 @@
 
 All notable changes to `ocw` are documented here.
 
+## 0.7.0-alpha
+
+- Add `ocw report` with Markdown, HTML, JSON, JUnit XML, and SARIF output for saved worker artifacts.
+- Add `ocw eval` for lightweight model/task eval files with saved Markdown, TSV, JSONL, summaries, metadata, and audit support.
+- Add `ocw doctor --json --fix` for machine-readable diagnostics and safe skill/output-root repair.
+- Add `ocw policy` for local safety gates, including strict mode that fails on audit warnings and non-isolated patch drafts.
+- Add `ocw agents sync|diff|doctor` for project-local Codex, Claude Code, OpenCode, and Agent Skills integration files.
+- Add `ocw gh-extension install` so users can run `gh ocw ...` through GitHub CLI.
+- Add `ocw security init|scorecard|policy` for OpenSSF Scorecard workflow setup and local security guidance.
+- Expand MCP with `ocw_report`, `ocw_eval`, and `ocw_doctor` tools, plus latest-run resources and workflow prompt templates.
+- Expand tests and the packaged gauntlet for the new CLI, MCP, policy, report, eval, and security paths.
+
 ## 0.6.0-alpha
 
 - Add `ocw manifest` for machine-readable run metadata, artifact paths, file sizes, and SHA-256 checksums.

@@ -136,7 +136,13 @@ negative_matrix() {
     "$ocw" apply --help >/dev/null
     "$ocw" clean --help >/dev/null
     "$ocw" agent-pack --help >/dev/null
+    "$ocw" agents --help >/dev/null
+    "$ocw" eval --help >/dev/null
     "$ocw" pr --help >/dev/null
+    "$ocw" report --help >/dev/null
+    "$ocw" policy --help >/dev/null
+    "$ocw" gh-extension --help >/dev/null
+    "$ocw" security --help >/dev/null
     "$ocw" mcp-config --help >/dev/null
     "$ocw" completions bash >/dev/null
     "$ocw" completions zsh >/dev/null
@@ -147,6 +153,7 @@ negative_matrix() {
     expect_fail "$ocw" --unknown cheap task
     expect_fail "$ocw" cheap --unknown task
     expect_fail "$ocw" batch missing-file.ocw
+    expect_fail "$ocw" eval missing-file.ocw
     expect_fail "$ocw" clean --days nope
     expect_fail "$ocw" pr review
     expect_fail "$ocw" apply latest
@@ -244,6 +251,35 @@ TASKS
 
     OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-bench "$ocw" bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2 --task "bench task" >/dev/null
     assert_file ".out/g-bench-bench/bench.tsv"
+
+    cat > eval.ocw <<'EVALS'
+cheap|Return MOCK_OK for eval|MOCK_OK
+review|Return MOCK_OK for review eval|MOCK_OK
+EVALS
+    OCW_TEST_CREATED_AT="2026-05-04T00:00:07Z" OCW_TEST_STAMP=g-eval "$ocw" eval eval.ocw --iterations 1 >/dev/null
+    assert_file ".out/g-eval-eval/eval.tsv"
+    "$ocw" audit latest > "$TMP_ROOT/eval-audit.txt"
+    assert_contains "$TMP_ROOT/eval-audit.txt" "all eval expectations are present"
+
+    "$ocw" report latest --json --out reports/latest.json >/dev/null
+    "$ocw" report latest --html --out reports/latest.html >/dev/null
+    "$ocw" report latest --junit --out reports/latest.xml >/dev/null
+    "$ocw" report latest --sarif --out reports/latest.sarif >/dev/null
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' reports/latest.json
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' reports/latest.sarif
+    assert_contains reports/latest.xml "<testsuite"
+
+    "$ocw" agents sync --force >/dev/null
+    "$ocw" agents doctor >/dev/null
+    "$ocw" agents diff >/dev/null
+    "$ocw" policy init strict --force >/dev/null
+    "$ocw" policy check latest > "$TMP_ROOT/policy-check.txt"
+    assert_contains "$TMP_ROOT/policy-check.txt" "policy: ok"
+    "$ocw" gh-extension install --dir "$TMP_ROOT/gh-ext" >/dev/null
+    assert_file "$TMP_ROOT/gh-ext/gh-ocw"
+    "$ocw" security init --force >/dev/null
+    assert_file ".github/workflows/scorecard.yml"
+    assert_contains ".github/workflows/scorecard.yml" "actions/checkout@v6"
 
     OCW_TEST_CREATED_AT="2026-05-04T00:00:08Z" OCW_TEST_STAMP=g-prsum "$ocw" pr summary 123 --repo owner/repo >/dev/null
     OCW_TEST_CREATED_AT="2026-05-04T00:00:09Z" OCW_TEST_STAMP=g-prrev "$ocw" pr review 123 --repo owner/repo >/dev/null

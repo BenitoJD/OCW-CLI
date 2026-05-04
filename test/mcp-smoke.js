@@ -42,6 +42,7 @@ function createClient(repo) {
       ...process.env,
       OCW_OPENCODE_BIN: MOCK_OPENCODE,
       OCW_GH_BIN: MOCK_GH,
+      OCW_OUTPUT_ROOT: '.out',
       OCW_MOCK_LOG: path.join(repo, '.out', 'mock.log'),
       OCW_TEST_CREATED_AT: '2026-01-01T00:00:00Z',
     },
@@ -103,13 +104,34 @@ function createClient(repo) {
     });
     assert.equal(init.serverInfo.name, 'ocw-mcp');
     assert.ok(init.capabilities.tools);
+    assert.ok(init.capabilities.resources);
+    assert.ok(init.capabilities.prompts);
     client.notify('notifications/initialized');
 
     const listed = await client.request('tools/list', {});
     const names = listed.tools.map((tool) => tool.name).sort();
-    assert.deepEqual(names, ['ocw_apply', 'ocw_apply_check', 'ocw_audit', 'ocw_last', 'ocw_manifest', 'ocw_run', 'ocw_show', 'ocw_stats'].sort());
+    assert.deepEqual(names, [
+      'ocw_apply',
+      'ocw_apply_check',
+      'ocw_audit',
+      'ocw_doctor',
+      'ocw_eval',
+      'ocw_last',
+      'ocw_manifest',
+      'ocw_report',
+      'ocw_run',
+      'ocw_show',
+      'ocw_stats',
+    ].sort());
 
     const common = { cwd: repo, output_root: '.out' };
+    const doctor = await client.request('tools/call', {
+      name: 'ocw_doctor',
+      arguments: { ...common, deep: true },
+    });
+    assert.equal(doctor.structuredContent.status, 0);
+    assert.match(doctor.structuredContent.stdout, /"schema_version": "ocw\.doctor\.v1"/);
+
     const runCheap = await client.request('tools/call', {
       name: 'ocw_run',
       arguments: {
@@ -151,6 +173,34 @@ function createClient(repo) {
     assert.equal(audit.structuredContent.status, 0);
     assert.match(audit.structuredContent.stdout, /"overall": "ok"/);
 
+    const resources = await client.request('resources/list', {});
+    assert.ok(resources.resources.some((resource) => resource.uri === 'ocw://latest/summary'));
+    const summaryResource = await client.request('resources/read', { uri: 'ocw://latest/summary' });
+    assert.match(summaryResource.contents[0].text, /MOCK_OK/);
+
+    const prompts = await client.request('prompts/list', {});
+    assert.ok(prompts.prompts.some((prompt) => prompt.name === 'ocw-patch-small'));
+    const prompt = await client.request('prompts/get', {
+      name: 'ocw-patch-small',
+      arguments: { task: 'fix the small bug' },
+    });
+    assert.match(prompt.messages[0].content.text, /ocw --worktree patch/);
+
+    const report = await client.request('tools/call', {
+      name: 'ocw_report',
+      arguments: { ...common, ref: 'latest', format: 'json' },
+    });
+    assert.equal(report.structuredContent.status, 0);
+    assert.match(report.structuredContent.stdout, /"schema_version": "ocw\.report\.v1"/);
+
+    fs.writeFileSync(path.join(repo, 'eval.ocw'), 'cheap|Return MOCK_OK for the eval|MOCK_OK\n');
+    const evalRun = await client.request('tools/call', {
+      name: 'ocw_eval',
+      arguments: { ...common, file: 'eval.ocw', iterations: 1 },
+    });
+    assert.equal(evalRun.structuredContent.status, 0);
+    assert.match(evalRun.structuredContent.output_dir, /eval$/);
+
     const patch = await client.request('tools/call', {
       name: 'ocw_run',
       arguments: {
@@ -164,14 +214,14 @@ function createClient(repo) {
 
     const check = await client.request('tools/call', {
       name: 'ocw_apply_check',
-      arguments: common,
+      arguments: { ...common, allow_dirty: true },
     });
     assert.equal(check.structuredContent.status, 0);
     assert.match(check.structuredContent.stdout, /Patch can be applied/);
 
     const apply = await client.request('tools/call', {
       name: 'ocw_apply',
-      arguments: common,
+      arguments: { ...common, allow_dirty: true },
     });
     assert.equal(apply.structuredContent.status, 0);
     assert.match(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8'), /mock edit from opencode-go\/kimi-k2\.6/);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.6.0-alpha"
+VERSION="0.7.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
@@ -42,13 +42,19 @@ Usage:
   ocw clean (--days N|--all) [--dry-run] [--yes]
   ocw stats [opencode-stats-options...]
   ocw serve [opencode-serve-options...]
-  ocw doctor [--deep]
+  ocw doctor [--deep] [--json] [--fix]
   ocw models [opencode-models-options...]
   ocw agent-pack install [--global|--dir DIR] [--force]
+  ocw agents sync|diff|doctor [--force]
   ocw bench [--models CSV] [--iterations N] [--task TASK] [--agent AGENT]
   ocw batch TASK_FILE [--concurrency N] [--worktree-patches] [--rm-worktree]
+  ocw eval EVAL_FILE [--models CSV] [--iterations N] [--agent AGENT]
   ocw pr review PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
   ocw pr summary PR [--repo OWNER/REPO] [--model MODEL] [--agent AGENT]
+  ocw report [latest|run-dir] [--markdown|--html|--json|--junit|--sarif] [--out FILE]
+  ocw policy init|show|check [options]
+  ocw gh-extension install [--dir DIR] [--force]
+  ocw security init|scorecard|policy [options]
   ocw mcp-config [codex|claude|opencode|all]
   ocw completions [bash|zsh|fish]
   ocw mcp
@@ -417,6 +423,19 @@ json_string() {
   printf '"%s"' "$(json_escape "$1")"
 }
 
+html_escape() {
+  printf '%s' "$1" | sed \
+    -e 's/&/\&amp;/g' \
+    -e 's/</\&lt;/g' \
+    -e 's/>/\&gt;/g' \
+    -e 's/"/\&quot;/g' \
+    -e "s/'/\&#39;/g"
+}
+
+xml_escape() {
+  html_escape "$1"
+}
+
 file_size_bytes() {
   local file="$1"
   local size
@@ -566,9 +585,12 @@ resolve_run_dir() {
 
 doctor() {
   local deep=0
+  local json=0
+  local fix=0
   local health=0
-  local output_abs root models_file model_count opencode_version
+  local output_abs root models_file="" model_count=0 opencode_version overall first severity id message
   local codex_skills_dir claude_skills_dir opencode_home_dir opencode_skills_dir agents_skills_dir
+  local check_file
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -576,8 +598,16 @@ doctor() {
         deep=1
         shift
         ;;
+      --json)
+        json=1
+        shift
+        ;;
+      --fix)
+        fix=1
+        shift
+        ;;
       -h|--help)
-        printf 'Usage: ocw doctor [--deep]\n'
+        printf 'Usage: ocw doctor [--deep] [--json] [--fix]\n'
         return
         ;;
       *)
@@ -586,83 +616,7 @@ doctor() {
     esac
   done
 
-  printf 'ocw %s\n' "$VERSION"
-
-  if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
-    printf 'config: %s\n' "$OCW_CONFIG_FILE"
-  else
-    printf 'config: none\n'
-  fi
-
-  if have_command "$OPENCODE_BIN"; then
-    printf 'opencode: %s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")"
-    opencode_version="$("$OPENCODE_BIN" --version 2>/dev/null || "$OPENCODE_BIN" version 2>/dev/null || true)"
-    if [[ -n "$opencode_version" ]]; then
-      printf 'opencode version: %s\n' "$opencode_version"
-    fi
-  else
-    printf 'opencode: missing\n'
-    health=1
-  fi
-
-  if have_command "$GIT_BIN"; then
-    printf 'git: %s\n' "$(command -v "$GIT_BIN" 2>/dev/null || printf '%s' "$GIT_BIN")"
-  else
-    printf 'git: missing\n'
-  fi
-
-  if have_command jq; then
-    printf 'jq: %s\n' "$(command -v jq)"
-  else
-    printf 'jq: missing; summaries will fall back to raw JSONL\n'
-  fi
-
-  if have_command "$OPENCODE_BIN"; then
-    if "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1; then
-      printf 'opencode-go models: reachable\n'
-    else
-      printf 'opencode-go models: not reachable\n'
-      health=1
-    fi
-  fi
-
-  if [[ "$deep" -ne 1 ]]; then
-    return 0
-  fi
-
-  output_abs="$(prepare_output_root "${out_base:-$DEFAULT_OUTPUT_ROOT}")"
-  printf 'output root: %s\n' "$output_abs"
-  [[ -w "$output_abs" ]] || health=1
-
-  if have_command "$GIT_BIN"; then
-    root="$(git_root "$PWD")"
-    if [[ -n "$root" ]]; then
-      printf 'git root: %s\n' "$root"
-      if git_is_clean "$PWD"; then
-        printf 'git state: clean\n'
-      else
-        printf 'git state: dirty\n'
-      fi
-    else
-      printf 'git root: none\n'
-    fi
-  fi
-
-  if have_command "$OPENCODE_BIN"; then
-    models_file="$(mktemp "${TMPDIR:-/tmp}/ocw-models.XXXXXX")"
-    if "$OPENCODE_BIN" models opencode-go > "$models_file" 2>/dev/null; then
-      model_count="$(grep -c . "$models_file" || true)"
-      printf 'opencode-go model count: %s\n' "$model_count"
-      while IFS= read -r model; do
-        [[ -n "$model" ]] || continue
-        printf '  - %s\n' "$model"
-      done < "$models_file"
-    else
-      printf 'opencode-go model list: failed\n'
-      health=1
-    fi
-    rm -f "$models_file"
-  fi
+  check_file="$(mktemp "${TMPDIR:-/tmp}/ocw-doctor.XXXXXX")"
 
   codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills}"
   claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills}"
@@ -670,21 +624,217 @@ doctor() {
   opencode_skills_dir="${OCW_OPENCODE_SKILLS_DIR:-$opencode_home_dir/skills}"
   agents_skills_dir="${OCW_AGENTS_SKILLS_DIR:-${AGENTS_HOME:-$HOME/.agents}/skills}"
 
-  printf 'skill Codex: %s\n' "$codex_skills_dir/$SKILL_NAME/SKILL.md"
-  [[ -f "$codex_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Codex status: not installed\n'
-  printf 'skill Claude Code: %s\n' "$claude_skills_dir/$SKILL_NAME/SKILL.md"
-  [[ -f "$claude_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Claude Code status: not installed\n'
-  printf 'skill OpenCode: %s\n' "$opencode_skills_dir/$SKILL_NAME/SKILL.md"
-  [[ -f "$opencode_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill OpenCode status: not installed\n'
-  printf 'skill Agents: %s\n' "$agents_skills_dir/$SKILL_NAME/SKILL.md"
-  [[ -f "$agents_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Agents status: not installed\n'
-
-  if [[ "$health" -eq 0 ]]; then
-    printf 'doctor deep: ok\n'
-  else
-    printf 'doctor deep: issues found\n'
+  if [[ "$fix" -eq 1 ]]; then
+    prepare_output_root "${out_base:-$DEFAULT_OUTPUT_ROOT}" >/dev/null
+    install_agent_skill "Codex" "$codex_skills_dir" >/dev/null
+    install_agent_skill "Claude Code" "$claude_skills_dir" >/dev/null
+    install_agent_skill "OpenCode" "$opencode_skills_dir" >/dev/null
+    install_agent_skill "Agents" "$agents_skills_dir" >/dev/null
   fi
 
+  printf 'ok\tversion\tocw %s\n' "$VERSION" >> "$check_file"
+
+  if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
+    printf 'ok\tconfig\t%s\n' "$OCW_CONFIG_FILE" >> "$check_file"
+  else
+    printf 'ok\tconfig\tno project config loaded\n' >> "$check_file"
+  fi
+
+  if have_command "$OPENCODE_BIN"; then
+    opencode_version="$("$OPENCODE_BIN" --version 2>/dev/null || "$OPENCODE_BIN" version 2>/dev/null || true)"
+    printf 'ok\topencode\t%s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")" >> "$check_file"
+    [[ -n "$opencode_version" ]] && printf 'ok\topencode_version\t%s\n' "$opencode_version" >> "$check_file"
+  else
+    printf 'fail\topencode\tmissing\n' >> "$check_file"
+    health=1
+  fi
+
+  if have_command "$GIT_BIN"; then
+    printf 'ok\tgit\t%s\n' "$(command -v "$GIT_BIN" 2>/dev/null || printf '%s' "$GIT_BIN")" >> "$check_file"
+  else
+    printf 'warn\tgit\tmissing\n' >> "$check_file"
+  fi
+
+  if have_command jq; then
+    printf 'ok\tjq\t%s\n' "$(command -v jq)" >> "$check_file"
+  else
+    printf 'warn\tjq\tmissing; summaries will fall back to raw JSONL\n' >> "$check_file"
+  fi
+
+  if have_command "$OPENCODE_BIN"; then
+    if "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1; then
+      printf 'ok\topencode_go_models\treachable\n' >> "$check_file"
+    else
+      printf 'fail\topencode_go_models\tnot reachable\n' >> "$check_file"
+      health=1
+    fi
+  fi
+
+  if [[ "$deep" -eq 1 ]]; then
+    output_abs="$(prepare_output_root "${out_base:-$DEFAULT_OUTPUT_ROOT}")"
+    if [[ -w "$output_abs" ]]; then
+      printf 'ok\toutput_root\t%s\n' "$output_abs" >> "$check_file"
+    else
+      printf 'fail\toutput_root\tnot writable: %s\n' "$output_abs" >> "$check_file"
+      health=1
+    fi
+
+    if have_command "$GIT_BIN"; then
+      root="$(git_root "$PWD")"
+      if [[ -n "$root" ]]; then
+        printf 'ok\tgit_root\t%s\n' "$root" >> "$check_file"
+        if git_is_clean "$PWD"; then
+          printf 'ok\tgit_state\tclean\n' >> "$check_file"
+        else
+          printf 'warn\tgit_state\tdirty\n' >> "$check_file"
+        fi
+      else
+        printf 'warn\tgit_root\tnone\n' >> "$check_file"
+      fi
+    fi
+
+    if have_command "$OPENCODE_BIN"; then
+      models_file="$(mktemp "${TMPDIR:-/tmp}/ocw-models.XXXXXX")"
+      if "$OPENCODE_BIN" models opencode-go > "$models_file" 2>/dev/null; then
+        model_count="$(grep -c . "$models_file" || true)"
+        printf 'ok\topencode_go_model_count\t%s\n' "$model_count" >> "$check_file"
+      else
+        printf 'fail\topencode_go_model_list\tfailed\n' >> "$check_file"
+        health=1
+      fi
+    fi
+  fi
+
+  if [[ -f "$codex_skills_dir/$SKILL_NAME/SKILL.md" ]]; then
+    printf 'ok\tskill_codex\t%s\n' "$codex_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  else
+    printf 'warn\tskill_codex\tnot installed: %s\n' "$codex_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  fi
+  if [[ -f "$claude_skills_dir/$SKILL_NAME/SKILL.md" ]]; then
+    printf 'ok\tskill_claude\t%s\n' "$claude_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  else
+    printf 'warn\tskill_claude\tnot installed: %s\n' "$claude_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  fi
+  if [[ -f "$opencode_skills_dir/$SKILL_NAME/SKILL.md" ]]; then
+    printf 'ok\tskill_opencode\t%s\n' "$opencode_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  else
+    printf 'warn\tskill_opencode\tnot installed: %s\n' "$opencode_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  fi
+  if [[ -f "$agents_skills_dir/$SKILL_NAME/SKILL.md" ]]; then
+    printf 'ok\tskill_agents\t%s\n' "$agents_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  else
+    printf 'warn\tskill_agents\tnot installed: %s\n' "$agents_skills_dir/$SKILL_NAME/SKILL.md" >> "$check_file"
+  fi
+
+  overall="ok"
+  if awk -F '\t' '$1 == "fail" { found = 1 } END { exit(found ? 0 : 1) }' "$check_file"; then
+    overall="fail"
+  elif awk -F '\t' '$1 == "warn" { found = 1 } END { exit(found ? 0 : 1) }' "$check_file"; then
+    overall="warn"
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.doctor.v1",\n'
+    printf '  "version": '
+    json_string "$VERSION"
+    printf ',\n'
+    printf '  "overall": '
+    json_string "$overall"
+    printf ',\n'
+    printf '  "fixed": %s,\n' "$fix"
+    printf '  "checks": [\n'
+    first=1
+    while IFS=$'\t' read -r severity id message; do
+      [[ -n "$severity" ]] || continue
+      if [[ "$first" -eq 0 ]]; then
+        printf ',\n'
+      fi
+      printf '    { "severity": '
+      json_string "$severity"
+      printf ', "id": '
+      json_string "$id"
+      printf ', "message": '
+      json_string "$message"
+      printf ' }'
+      first=0
+    done < "$check_file"
+    printf '\n  ]\n'
+    printf '}\n'
+  else
+    printf 'ocw %s\n' "$VERSION"
+    if [[ -n "${OCW_CONFIG_FILE:-}" ]]; then
+      printf 'config: %s\n' "$OCW_CONFIG_FILE"
+    else
+      printf 'config: none\n'
+    fi
+    if have_command "$OPENCODE_BIN"; then
+      printf 'opencode: %s\n' "$(command -v "$OPENCODE_BIN" 2>/dev/null || printf '%s' "$OPENCODE_BIN")"
+      [[ -n "${opencode_version:-}" ]] && printf 'opencode version: %s\n' "$opencode_version"
+    else
+      printf 'opencode: missing\n'
+    fi
+    if have_command "$GIT_BIN"; then
+      printf 'git: %s\n' "$(command -v "$GIT_BIN" 2>/dev/null || printf '%s' "$GIT_BIN")"
+    else
+      printf 'git: missing\n'
+    fi
+    if have_command jq; then
+      printf 'jq: %s\n' "$(command -v jq)"
+    else
+      printf 'jq: missing; summaries will fall back to raw JSONL\n'
+    fi
+    if have_command "$OPENCODE_BIN"; then
+      if "$OPENCODE_BIN" models opencode-go >/dev/null 2>&1; then
+        printf 'opencode-go models: reachable\n'
+      else
+        printf 'opencode-go models: not reachable\n'
+      fi
+    fi
+    if [[ "$deep" -eq 1 ]]; then
+      printf 'output root: %s\n' "$output_abs"
+      if have_command "$GIT_BIN"; then
+        root="$(git_root "$PWD")"
+        if [[ -n "$root" ]]; then
+          printf 'git root: %s\n' "$root"
+          if git_is_clean "$PWD"; then
+            printf 'git state: clean\n'
+          else
+            printf 'git state: dirty\n'
+          fi
+        else
+          printf 'git root: none\n'
+        fi
+      fi
+      if [[ -n "$models_file" && -f "$models_file" ]]; then
+        printf 'opencode-go model count: %s\n' "$model_count"
+        while IFS= read -r message; do
+          [[ -n "$message" ]] || continue
+          printf '  - %s\n' "$message"
+        done < "$models_file"
+      fi
+    fi
+    printf 'skill Codex: %s\n' "$codex_skills_dir/$SKILL_NAME/SKILL.md"
+    [[ -f "$codex_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Codex status: not installed\n'
+    printf 'skill Claude Code: %s\n' "$claude_skills_dir/$SKILL_NAME/SKILL.md"
+    [[ -f "$claude_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Claude Code status: not installed\n'
+    printf 'skill OpenCode: %s\n' "$opencode_skills_dir/$SKILL_NAME/SKILL.md"
+    [[ -f "$opencode_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill OpenCode status: not installed\n'
+    printf 'skill Agents: %s\n' "$agents_skills_dir/$SKILL_NAME/SKILL.md"
+    [[ -f "$agents_skills_dir/$SKILL_NAME/SKILL.md" ]] || printf 'skill Agents status: not installed\n'
+    if [[ "$deep" -eq 1 ]]; then
+      if [[ "$health" -eq 0 ]]; then
+        printf 'doctor deep: ok\n'
+      else
+        printf 'doctor deep: issues found\n'
+      fi
+    else
+      printf 'doctor: %s\n' "$overall"
+    fi
+  fi
+
+  rm -f "$check_file"
+  [[ -n "$models_file" ]] && rm -f "$models_file"
   return "$health"
 }
 
@@ -1577,6 +1727,27 @@ audit_command() {
         audit_add fail batch_status "batch.tsv is missing or empty"
       fi
       ;;
+    eval)
+      if [[ -s "$run_dir/eval.tsv" ]]; then
+        if audit_tsv_status_failures "$run_dir/eval.tsv" 5; then
+          audit_add fail eval_status "one or more eval runs failed"
+        else
+          audit_add ok eval_status "all eval runs exited 0"
+        fi
+        if audit_tsv_marker_warnings "$run_dir/eval.tsv" 6; then
+          audit_add fail eval_marker "one or more eval expectations are missing"
+        else
+          audit_add ok eval_marker "all eval expectations are present"
+        fi
+      else
+        audit_add fail eval_status "eval.tsv is missing or empty"
+      fi
+      if [[ -s "$run_dir/eval.md" ]]; then
+        audit_add ok eval_report "eval.md is present"
+      else
+        audit_add fail eval_report "eval.md is missing or empty"
+      fi
+      ;;
     "")
       ;;
     *)
@@ -1712,6 +1883,279 @@ apply_command() {
   "$GIT_BIN" -C "$PWD" apply "$patch"
   printf 'Applied patch: %s\n' "$patch"
   "$GIT_BIN" -C "$PWD" diff --stat || true
+}
+
+report_write() {
+  local out_file="$1"
+  local tmp_file="$2"
+
+  if [[ -n "$out_file" ]]; then
+    mkdir -p "$(dirname "$out_file")"
+    mv "$tmp_file" "$out_file"
+    printf 'OCW report written: %s\n' "$out_file"
+  else
+    cat "$tmp_file"
+    rm -f "$tmp_file"
+  fi
+}
+
+report_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local format="markdown"
+  local out_file=""
+  local run_dir metadata_file mode status model agent created_at summary diff_stat audit_text audit_status tmp title
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --markdown) format="markdown"; shift ;;
+      --html) format="html"; shift ;;
+      --json) format="json"; shift ;;
+      --junit) format="junit"; shift ;;
+      --sarif) format="sarif"; shift ;;
+      --out)
+        [[ $# -ge 2 ]] || die "--out requires a value"
+        out_file="$2"
+        shift 2
+        ;;
+      -h|--help)
+        printf 'Usage: ocw report [latest|run-dir] [--markdown|--html|--json|--junit|--sarif] [--out FILE]\n'
+        return
+        ;;
+      -*)
+        die "unknown report option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  root="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root" "$ref")"
+  metadata_file="$run_dir/metadata.txt"
+  mode="$(metadata_value "$metadata_file" "mode")"
+  status="$(metadata_value "$metadata_file" "status")"
+  model="$(metadata_value "$metadata_file" "model")"
+  agent="$(metadata_value "$metadata_file" "agent")"
+  created_at="$(metadata_value "$metadata_file" "created_at")"
+  summary=""
+  [[ -f "$run_dir/summary.md" ]] && summary="$(cat "$run_dir/summary.md")"
+  diff_stat=""
+  [[ -f "$run_dir/diff.after.stat" ]] && diff_stat="$(cat "$run_dir/diff.after.stat")"
+  set +e
+  audit_text="$(audit_command "$root" "$run_dir")"
+  audit_status=$?
+  set -e
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-report.XXXXXX")"
+  title="OCW report: $(basename "$run_dir")"
+
+  case "$format" in
+    markdown)
+      {
+        printf '# %s\n\n' "$title"
+        printf -- "- run: \`%s\`\n" "$run_dir"
+        printf -- "- mode: \`%s\`\n" "${mode:-unknown}"
+        printf -- "- status: \`%s\`\n" "${status:-unknown}"
+        printf -- "- model: \`%s\`\n" "${model:-}"
+        printf -- "- agent: \`%s\`\n" "${agent:-}"
+        printf -- "- created_at: \`%s\`\n\n" "${created_at:-}"
+        printf '## Summary\n\n%s\n\n' "${summary:-No summary artifact found.}"
+        printf "## Diff Stat\n\n\`\`\`text\n%s\n\`\`\`\n\n" "${diff_stat:-No diff stat artifact found.}"
+        printf "## Audit\n\n\`\`\`text\n%s\n\`\`\`\n" "$audit_text"
+      } > "$tmp"
+      ;;
+    html)
+      {
+        printf '<!doctype html>\n<html><head><meta charset="utf-8"><title>%s</title>' "$(html_escape "$title")"
+        printf '<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;line-height:1.5}pre{background:#f6f8fa;padding:12px;overflow:auto}code{background:#f6f8fa;padding:2px 4px}</style>'
+        printf '</head><body><h1>%s</h1>' "$(html_escape "$title")"
+        printf '<p><strong>run:</strong> <code>%s</code></p>' "$(html_escape "$run_dir")"
+        printf '<p><strong>mode:</strong> <code>%s</code> <strong>status:</strong> <code>%s</code></p>' "$(html_escape "${mode:-unknown}")" "$(html_escape "${status:-unknown}")"
+        printf '<h2>Summary</h2><pre>%s</pre>' "$(html_escape "${summary:-No summary artifact found.}")"
+        printf '<h2>Diff Stat</h2><pre>%s</pre>' "$(html_escape "${diff_stat:-No diff stat artifact found.}")"
+        printf '<h2>Audit</h2><pre>%s</pre></body></html>\n' "$(html_escape "$audit_text")"
+      } > "$tmp"
+      ;;
+    json)
+      {
+        printf '{\n'
+        printf '  "schema_version": "ocw.report.v1",\n'
+        printf '  "run_dir": '
+        json_string "$run_dir"
+        printf ',\n  "mode": '
+        json_string "${mode:-}"
+        printf ',\n  "status": '
+        json_string "${status:-}"
+        printf ',\n  "model": '
+        json_string "${model:-}"
+        printf ',\n  "agent": '
+        json_string "${agent:-}"
+        printf ',\n  "created_at": '
+        json_string "${created_at:-}"
+        printf ',\n  "audit_status": %s,\n  "summary": ' "$audit_status"
+        json_string "$summary"
+        printf ',\n  "diff_stat": '
+        json_string "$diff_stat"
+        printf ',\n  "audit": '
+        json_string "$audit_text"
+        printf '\n}\n'
+      } > "$tmp"
+      ;;
+    junit)
+      {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+        printf '<testsuite name="ocw" tests="1" failures="%s">\n' "$audit_status"
+        printf '  <testcase classname="ocw.audit" name="%s">\n' "$(xml_escape "$(basename "$run_dir")")"
+        if [[ "$audit_status" -ne 0 ]]; then
+          printf '    <failure message="OCW audit failed"><![CDATA[%s]]></failure>\n' "$audit_text"
+        fi
+        printf '  </testcase>\n</testsuite>\n'
+      } > "$tmp"
+      ;;
+    sarif)
+      {
+        printf '{\n'
+        printf '  "version": "2.1.0",\n'
+        printf "  \"\$schema\": \"https://json.schemastore.org/sarif-2.1.0.json\",\n"
+        printf '  "runs": [{\n'
+        printf '    "tool": { "driver": { "name": "ocw", "version": '
+        json_string "$VERSION"
+        printf ', "informationUri": "https://github.com/BenitoJD/OCW-CLI" } },\n'
+        printf '    "results": [{ "ruleId": "ocw-audit", "level": '
+        if [[ "$audit_status" -ne 0 ]]; then
+          json_string "error"
+        elif grep -Fq 'overall: warn' <<< "$audit_text"; then
+          json_string "warning"
+        else
+          json_string "note"
+        fi
+        printf ', "message": { "text": '
+        json_string "$audit_text"
+        printf ' }, "locations": [{ "physicalLocation": { "artifactLocation": { "uri": '
+        json_string "$run_dir"
+        printf ' } } }] }]\n'
+        printf '  }]\n}\n'
+      } > "$tmp"
+      ;;
+    *)
+      die "unknown report format: $format"
+      ;;
+  esac
+
+  report_write "$out_file" "$tmp"
+  return "$audit_status"
+}
+
+print_default_policy() {
+  local profile="${1:-balanced}"
+  cat <<EOF
+profile = "$profile"
+fail_on_audit_warn = $([[ "$profile" == "strict" ]] && printf 'true' || printf 'false')
+require_patch_worktree = true
+max_diff_bytes = 200000
+EOF
+}
+
+policy_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 0
+  awk -F= -v key="$key" '$1 ~ "^[[:space:]]*" key "[[:space:]]*$" { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); gsub(/^"|"$/, "", $2); print $2 }' "$file" | tail -n 1
+}
+
+policy_command() {
+  local root="$1"
+  shift
+  local subcommand="${1:-check}"
+  local profile="balanced"
+  local force=0
+  local ref="latest"
+  local policy_file=".ocw-policy.toml"
+  local audit_text audit_status run_dir metadata_file mode worktree fail_on_warn require_worktree max_diff_bytes
+
+  shift || true
+  case "$subcommand" in
+    init)
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        profile="$1"
+        shift
+      fi
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --force) force=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw policy init [balanced|strict] [--force]\n'
+            return
+            ;;
+          *) die "unknown policy init option: $1" ;;
+        esac
+      done
+      case "$profile" in balanced|strict) ;; *) die "unknown policy profile: $profile" ;; esac
+      if [[ -f "$policy_file" && "$force" -ne 1 ]]; then
+        printf 'Kept existing policy: %s\n' "$policy_file"
+      else
+        print_default_policy "$profile" > "$policy_file"
+        printf 'Installed policy: %s\n' "$policy_file"
+      fi
+      ;;
+    show)
+      if [[ -f "$policy_file" ]]; then
+        cat "$policy_file"
+      else
+        print_default_policy balanced
+      fi
+      ;;
+    check)
+      if [[ $# -gt 0 ]]; then
+        ref="$1"
+        shift
+      fi
+      [[ $# -eq 0 ]] || die "unknown policy check option: $1"
+      root="$(abs_existing_dir "$root")"
+      run_dir="$(resolve_run_dir "$root" "$ref")"
+      metadata_file="$run_dir/metadata.txt"
+      fail_on_warn="$(policy_value "$policy_file" "fail_on_audit_warn")"
+      require_worktree="$(policy_value "$policy_file" "require_patch_worktree")"
+      max_diff_bytes="$(policy_value "$policy_file" "max_diff_bytes")"
+      [[ -n "$fail_on_warn" ]] || fail_on_warn="false"
+      [[ -n "$require_worktree" ]] || require_worktree="true"
+      [[ -n "$max_diff_bytes" ]] || max_diff_bytes="200000"
+      set +e
+      audit_text="$(audit_command "$root" "$run_dir" --max-diff-bytes "$max_diff_bytes")"
+      audit_status=$?
+      set -e
+      printf '%s\n' "$audit_text"
+      if [[ "$audit_status" -ne 0 ]]; then
+        return "$audit_status"
+      fi
+      if [[ "$fail_on_warn" == "true" && "$audit_text" == *"overall: warn"* ]]; then
+        printf 'policy: failed because fail_on_audit_warn=true\n' >&2
+        return 1
+      fi
+      mode="$(metadata_value "$metadata_file" "mode")"
+      worktree="$(metadata_value "$metadata_file" "worktree")"
+      if [[ "$require_worktree" == "true" && "$mode" == "patch" && "$worktree" != "1" ]]; then
+        printf 'policy: failed because patch did not run in an isolated worktree\n' >&2
+        return 1
+      fi
+      printf 'policy: ok\n'
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw policy init [balanced|strict] [--force]
+  ocw policy show
+  ocw policy check [latest|run-dir]
+EOF
+      ;;
+    *)
+      die "unknown policy command: $subcommand"
+      ;;
+  esac
 }
 
 clean_command() {
@@ -1976,6 +2420,288 @@ EOF
   write_ocw_agent_file "$target_dir" "ocw-patcher" "$force"
   write_ocw_agent_file "$target_dir" "ocw-triage" "$force"
   printf 'OCW agent pack installed in: %s\n' "$target_dir"
+}
+
+agents_command() {
+  local subcommand="${1:-doctor}"
+  shift || true
+  local force=0
+  local status=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw agents sync|diff|doctor [--force]
+
+Project-local integration helpers for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients.
+EOF
+        return
+        ;;
+      *)
+        die "unknown agents option: $1"
+        ;;
+    esac
+  done
+
+  case "$subcommand" in
+    sync)
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
+      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      write_default_config ".ocw.toml" "$force"
+      copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
+      copy_if_needed "$OCW_HOME/examples/claude/CLAUDE.md" "CLAUDE.md" "Claude Code instructions" "$force"
+      install_agent_skill "project OpenCode" ".opencode/skills"
+      install_agent_skill "project Claude Code" ".claude/skills"
+      install_agent_skill "project Agents" ".agents/skills"
+      agent_pack_command install
+      printf 'OCW agent files synced\n'
+      ;;
+    diff)
+      if [[ -f "AGENTS.md" ]] && cmp -s "AGENTS.md" "$OCW_HOME/examples/codex/AGENTS.md"; then
+        printf 'AGENTS.md: match\n'
+      elif [[ -f "AGENTS.md" ]]; then
+        printf 'AGENTS.md: different\n'
+        status=1
+      else
+        printf 'AGENTS.md: missing\n'
+        status=1
+      fi
+      if [[ -f "CLAUDE.md" ]] && cmp -s "CLAUDE.md" "$OCW_HOME/examples/claude/CLAUDE.md"; then
+        printf 'CLAUDE.md: match\n'
+      elif [[ -f "CLAUDE.md" ]]; then
+        printf 'CLAUDE.md: different\n'
+        status=1
+      else
+        printf 'CLAUDE.md: missing\n'
+        status=1
+      fi
+      return "$status"
+      ;;
+    doctor)
+      for file in ".ocw.toml" "AGENTS.md" "CLAUDE.md" ".opencode/skills/$SKILL_NAME/SKILL.md" ".claude/skills/$SKILL_NAME/SKILL.md" ".agents/skills/$SKILL_NAME/SKILL.md" ".opencode/agents/ocw-explorer.md" ".opencode/agents/ocw-reviewer.md" ".opencode/agents/ocw-patcher.md" ".opencode/agents/ocw-triage.md"; do
+        if [[ -f "$file" ]]; then
+          printf '[ok] %s\n' "$file"
+        else
+          printf '[missing] %s\n' "$file"
+          status=1
+        fi
+      done
+      return "$status"
+      ;;
+    -h|--help|help)
+      printf 'Usage: ocw agents sync|diff|doctor [--force]\n'
+      ;;
+    *)
+      die "unknown agents command: $subcommand"
+      ;;
+  esac
+}
+
+mode_default_model() {
+  case "$1" in
+    cheap) printf '%s\n' "${OCW_CHEAP_MODEL:-${OCW_CONFIG_CHEAP_MODEL:-opencode-go/qwen3.5-plus}}" ;;
+    explore) printf '%s\n' "${OCW_EXPLORE_MODEL:-${OCW_CONFIG_EXPLORE_MODEL:-opencode-go/deepseek-v4-flash}}" ;;
+    scan) printf '%s\n' "${OCW_SCAN_MODEL:-${OCW_CONFIG_SCAN_MODEL:-opencode-go/mimo-v2.5}}" ;;
+    review) printf '%s\n' "${OCW_REVIEW_MODEL:-${OCW_CONFIG_REVIEW_MODEL:-opencode-go/deepseek-v4-pro}}" ;;
+    patch) printf '%s\n' "${OCW_PATCH_MODEL:-${OCW_CONFIG_PATCH_MODEL:-opencode-go/kimi-k2.6}}" ;;
+    *) die "unknown mode: $1" ;;
+  esac
+}
+
+mode_default_agent() {
+  case "$1" in
+    cheap) printf '%s\n' "${OCW_CHEAP_AGENT:-${OCW_CONFIG_CHEAP_AGENT:-plan}}" ;;
+    explore) printf '%s\n' "${OCW_EXPLORE_AGENT:-${OCW_CONFIG_EXPLORE_AGENT:-plan}}" ;;
+    scan) printf '%s\n' "${OCW_SCAN_AGENT:-${OCW_CONFIG_SCAN_AGENT:-plan}}" ;;
+    review) printf '%s\n' "${OCW_REVIEW_AGENT:-${OCW_CONFIG_REVIEW_AGENT:-plan}}" ;;
+    patch) printf '%s\n' "${OCW_PATCH_AGENT:-${OCW_CONFIG_PATCH_AGENT:-build}}" ;;
+    *) die "unknown mode: $1" ;;
+  esac
+}
+
+eval_command() {
+  local root="$1"
+  shift
+  local eval_file=""
+  local models=""
+  local iterations=1
+  local agent_override=""
+  local variant="${OCW_VARIANT:-${OCW_CONFIG_VARIANT:-}}"
+  local attach_url="${OCW_ATTACH:-${OCW_CONFIG_ATTACH:-}}"
+  local root_abs eval_dir tsv report metadata line mode task expect model_list model agent safe result_file summary_file
+  local index iteration prompt status marker summary created_at overall=0
+  local -a args
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --models)
+        [[ $# -ge 2 ]] || die "--models requires a comma-separated value"
+        models="$2"
+        shift 2
+        ;;
+      --iterations)
+        [[ $# -ge 2 ]] || die "--iterations requires a value"
+        iterations="$2"
+        shift 2
+        ;;
+      --agent)
+        [[ $# -ge 2 ]] || die "--agent requires a value"
+        agent_override="$2"
+        shift 2
+        ;;
+      --variant)
+        [[ $# -ge 2 ]] || die "--variant requires a value"
+        variant="$2"
+        shift 2
+        ;;
+      --attach)
+        [[ $# -ge 2 ]] || die "--attach requires a value"
+        attach_url="$2"
+        shift 2
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw eval EVAL_FILE [--models CSV] [--iterations N] [--agent AGENT]
+
+Eval file format:
+  # comments and blank lines are ignored
+  mode|task|expected substring
+
+If --models is omitted, each row uses OCW's default model for that mode.
+EOF
+        return
+        ;;
+      -*)
+        die "unknown eval option: $1"
+        ;;
+      *)
+        [[ -z "$eval_file" ]] || die "eval accepts one file"
+        eval_file="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ -n "$eval_file" ]] || die "eval requires an eval file"
+  [[ -f "$eval_file" ]] || die "eval file not found: $eval_file"
+  [[ "$iterations" =~ ^[0-9]+$ && "$iterations" -gt 0 ]] || die "--iterations must be a positive integer"
+  require_command "$OPENCODE_BIN"
+
+  root_abs="$(prepare_output_root "$root")"
+  eval_dir="$(allocate_output_dir "$root_abs" "eval")"
+  tsv="$eval_dir/eval.tsv"
+  report="$eval_dir/eval.md"
+  metadata="$eval_dir/metadata.txt"
+
+  printf 'index\tmode\tmodel\titeration\tstatus\tmarker\texpectation\tsummary_file\tresult_file\n' > "$tsv"
+  printf '# OCW eval\n\n' > "$report"
+  printf '| # | mode | model | iteration | status | marker | expectation | summary |\n' >> "$report"
+  printf '| ---: | --- | --- | ---: | ---: | --- | --- | --- |\n' >> "$report"
+
+  index=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *"|"* ]] || die "eval line must use mode|task|expectation: $line"
+    mode="$(trim "${line%%|*}")"
+    line="${line#*|}"
+    task="$(trim "${line%%|*}")"
+    if [[ "$line" == *"|"* ]]; then
+      expect="$(trim "${line#*|}")"
+    else
+      expect=""
+    fi
+    case "$mode" in
+      cheap|explore|scan|review|patch) ;;
+      *) die "unknown eval mode: $mode" ;;
+    esac
+    [[ -n "$task" ]] || die "eval line is missing a task"
+
+    if [[ -n "$models" ]]; then
+      model_list="$(csv_to_lines "$models")"
+    else
+      model_list="$(mode_default_model "$mode")"
+    fi
+    agent="${agent_override:-$(mode_default_agent "$mode")}"
+
+    while IFS= read -r model; do
+      [[ -n "$model" ]] || continue
+      iteration=1
+      while [[ "$iteration" -le "$iterations" ]]; do
+        index=$((index + 1))
+        safe="$(safe_name "$index-$mode-$model-$iteration")"
+        result_file="$eval_dir/$safe.jsonl"
+        summary_file="$eval_dir/$safe.summary.md"
+        prompt="Do not edit files.
+
+OCW eval task:
+$task
+
+Expected marker or behavior:
+$expect
+
+Return a compact answer."
+        args=(run --model "$model" --agent "$agent" --dir "$PWD" --format json)
+        [[ -n "$attach_url" ]] && args+=(--attach "$attach_url")
+        [[ -n "$variant" ]] && args+=(--variant "$variant")
+
+        set +e
+        (
+          cd "$PWD" || exit 2
+          "$OPENCODE_BIN" "${args[@]}" "$prompt"
+        ) > "$result_file"
+        status=$?
+        set -e
+
+        extract_summary "$result_file" "$summary_file"
+        marker="ok"
+        if [[ "$status" -ne 0 ]]; then
+          marker="failed"
+          overall=1
+        elif [[ -n "$expect" ]] && ! grep -Fq "$expect" "$summary_file"; then
+          marker="missing"
+          overall=1
+        fi
+        summary="$(tr '\n' ' ' < "$summary_file" | sed 's/|/\\|/g; s/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+        if [[ ${#summary} -gt 120 ]]; then
+          summary="${summary:0:117}..."
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$index" "$mode" "$model" "$iteration" "$status" "$marker" "$expect" "$summary_file" "$result_file" >> "$tsv"
+        printf "| %s | %s | \`%s\` | %s | %s | %s | %s | %s |\n" "$index" "$mode" "$model" "$iteration" "$status" "$marker" "$expect" "$summary" >> "$report"
+        iteration=$((iteration + 1))
+      done
+    done <<EOF
+$model_list
+EOF
+  done < "$eval_file"
+
+  [[ "$index" -gt 0 ]] || die "eval file has no tasks: $eval_file"
+
+  created_at="${OCW_TEST_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  {
+    printf 'version=%s\n' "$VERSION"
+    printf 'mode=eval\n'
+    printf 'eval_file=%s\n' "$eval_file"
+    printf 'models=%s\n' "$models"
+    printf 'iterations=%s\n' "$iterations"
+    printf 'agent=%s\n' "$agent_override"
+    printf 'variant=%s\n' "$variant"
+    printf 'attach_url=%s\n' "$attach_url"
+    printf 'status=%s\n' "$overall"
+    printf 'project_dir=%s\n' "$PWD"
+    printf 'output_dir=%s\n' "$eval_dir"
+    printf 'created_at=%s\n' "$created_at"
+    printf 'config_file=%s\n' "${OCW_CONFIG_FILE:-}"
+  } > "$metadata"
+
+  cat "$report"
+  printf '\nOCW eval output: %s\n' "$eval_dir"
+  return "$overall"
 }
 
 bench_command() {
@@ -2552,6 +3278,182 @@ Return the highest-signal risks and the exact tests or checks the primary agent 
   return "$status"
 }
 
+gh_extension_command() {
+  local subcommand="${1:-install}"
+  shift || true
+  local target_dir="${OCW_GH_EXTENSION_DIR:-$HOME/.local/bin}"
+  local force=0
+  local target
+
+  case "$subcommand" in
+    install)
+      ;;
+    path)
+      printf '%s\n' "$target_dir/gh-ocw"
+      return
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage: ocw gh-extension install [--dir DIR] [--force]
+
+Installs a gh-ocw wrapper so GitHub CLI can run `gh ocw ...`.
+EOF
+      return
+      ;;
+    *)
+      die "unknown gh-extension command: $subcommand"
+      ;;
+  esac
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir)
+        [[ $# -ge 2 ]] || die "--dir requires a value"
+        target_dir="$2"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw gh-extension install [--dir DIR] [--force]\n'
+        return
+        ;;
+      *)
+        die "unknown gh-extension option: $1"
+        ;;
+    esac
+  done
+
+  mkdir -p "$target_dir"
+  target="$target_dir/gh-ocw"
+  if [[ -e "$target" && "$force" -ne 1 ]]; then
+    printf 'Kept existing GitHub CLI extension: %s\n' "$target"
+    return
+  fi
+  cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec ocw "$@"
+EOF
+  chmod +x "$target"
+  printf 'Installed GitHub CLI extension: %s\n' "$target"
+  printf 'Run: gh ocw --help\n'
+}
+
+github_slug_from_remote() {
+  local remote url slug
+  remote="$("$GIT_BIN" remote get-url origin 2>/dev/null || true)"
+  [[ -n "$remote" ]] || return 1
+  url="$remote"
+  url="${url#git@github.com:}"
+  url="${url#https://github.com/}"
+  url="${url#http://github.com/}"
+  slug="${url%.git}"
+  [[ "$slug" == */* ]] || return 1
+  printf '%s\n' "$slug"
+}
+
+security_command() {
+  local subcommand="${1:-policy}"
+  shift || true
+  local force=0
+  local workflow=".github/workflows/scorecard.yml"
+  local slug
+
+  case "$subcommand" in
+    init)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --force) force=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw security init [--force]\n'
+            return
+            ;;
+          *) die "unknown security init option: $1" ;;
+        esac
+      done
+      if [[ -f "$workflow" && "$force" -ne 1 ]]; then
+        printf 'Kept existing Scorecard workflow: %s\n' "$workflow"
+        return
+      fi
+      mkdir -p "$(dirname "$workflow")"
+      cat > "$workflow" <<'EOF'
+name: Scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "30 3 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  scorecard:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: scorecard.sarif
+EOF
+      printf 'Installed Scorecard workflow: %s\n' "$workflow"
+      ;;
+    scorecard)
+      require_command "$GIT_BIN"
+      slug="$(github_slug_from_remote || true)"
+      [[ -n "$slug" ]] || die "could not infer GitHub owner/repo from origin remote"
+      if have_command curl; then
+        curl -fsSL "https://api.scorecard.dev/projects/github.com/$slug" || {
+          printf 'No published Scorecard result found for github.com/%s\n' "$slug" >&2
+          return 1
+        }
+      else
+        printf 'Install curl or open: https://scorecard.dev/viewer/?uri=github.com/%s\n' "$slug"
+      fi
+      ;;
+    policy)
+      cat <<'EOF'
+OCW security policy recommendations:
+- Treat worker output and PR diffs as untrusted content.
+- Prefer `ocw --worktree patch` and apply with `ocw apply --check` before `ocw apply`.
+- Run `ocw audit` or `ocw policy check` before using a worker artifact.
+- Keep `--auto-approve` off unless the project threat model permits it.
+- Use `ocw security init` to add OpenSSF Scorecard scanning to GitHub Actions.
+EOF
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw security init [--force]
+  ocw security scorecard
+  ocw security policy
+EOF
+      ;;
+    *)
+      die "unknown security command: $subcommand"
+      ;;
+  esac
+}
+
 mcp_config_command() {
   local target="${1:-all}"
 
@@ -2627,7 +3529,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+  commands="init uninstall last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security mcp-config completions mcp version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -2647,6 +3549,22 @@ _ocw()
       COMPREPLY=( $(compgen -W "summary review" -- "$cur") )
       return 0
       ;;
+    agents)
+      COMPREPLY=( $(compgen -W "sync diff doctor" -- "$cur") )
+      return 0
+      ;;
+    policy)
+      COMPREPLY=( $(compgen -W "init show check" -- "$cur") )
+      return 0
+      ;;
+    gh-extension)
+      COMPREPLY=( $(compgen -W "install path" -- "$cur") )
+      return 0
+      ;;
+    security)
+      COMPREPLY=( $(compgen -W "init scorecard policy" -- "$cur") )
+      return 0
+      ;;
   esac
 }
 complete -F _ocw ocw
@@ -2660,7 +3578,8 @@ _ocw() {
   local -a commands modes
   commands=(
     init uninstall last show manifest audit apply clean stats serve doctor models
-    agent-pack bench batch pr mcp-config completions mcp version
+    agent-pack agents bench batch eval pr report policy gh-extension security
+    mcp-config completions mcp version
   )
   modes=(cheap explore scan review patch)
 
@@ -2678,6 +3597,10 @@ _ocw() {
         mcp-config) _values 'target' codex claude opencode all ;;
         completions) _values 'shell' bash zsh fish ;;
         pr) _values 'action' summary review ;;
+        agents) _values 'action' sync diff doctor ;;
+        policy) _values 'action' init show check ;;
+        gh-extension) _values 'action' install path ;;
+        security) _values 'action' init scorecard policy ;;
       esac
       ;;
   esac
@@ -2688,10 +3611,14 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security mcp-config completions mcp version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
+complete -c ocw -n "__fish_seen_subcommand_from agents" -f -a "sync diff doctor"
+complete -c ocw -n "__fish_seen_subcommand_from policy" -f -a "init show check"
+complete -c ocw -n "__fish_seen_subcommand_from gh-extension" -f -a "install path"
+complete -c ocw -n "__fish_seen_subcommand_from security" -f -a "init scorecard policy"
 EOF
       ;;
     -h|--help|help|"")
@@ -2795,19 +3722,49 @@ case "$1" in
     agent_pack_command "$@"
     exit 0
     ;;
+  agents)
+    shift
+    agents_command "$@"
+    exit $?
+    ;;
   bench)
     shift
     bench_command "$out_base" "$@"
-    exit 0
+    exit $?
     ;;
   batch)
     shift
     batch_command "$out_base" "$@"
-    exit 0
+    exit $?
+    ;;
+  eval)
+    shift
+    eval_command "$out_base" "$@"
+    exit $?
     ;;
   pr)
     shift
     pr_command "$out_base" "$@"
+    exit $?
+    ;;
+  report)
+    shift
+    report_command "$out_base" "$@"
+    exit $?
+    ;;
+  policy)
+    shift
+    policy_command "$out_base" "$@"
+    exit $?
+    ;;
+  gh-extension)
+    shift
+    gh_extension_command "$@"
+    exit $?
+    ;;
+  security)
+    shift
+    security_command "$@"
     exit $?
     ;;
   mcp-config)

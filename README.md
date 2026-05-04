@@ -41,6 +41,8 @@ Check your setup:
 ```bash
 ocw doctor
 ocw doctor --deep
+ocw doctor --deep --json
+ocw doctor --fix
 ```
 
 Uninstall:
@@ -59,9 +61,10 @@ Bootstrap a project:
 ocw init
 ocw init --project-skills
 ocw agent-pack install
+ocw agents sync
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents.
+This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents. `ocw agents sync|diff|doctor` is the easiest project-local integration flow when you want repeatable setup across many repos.
 
 ## Usage
 
@@ -126,6 +129,18 @@ EOF
 ocw batch tasks.ocw --concurrency 3
 ```
 
+Run a lightweight eval:
+
+```bash
+cat > eval.ocw <<'EOF'
+cheap|Return OCW_EVAL_OK after reading tracked.txt|OCW_EVAL_OK
+review|Review the current diff and say OCW_EVAL_OK|OCW_EVAL_OK
+EOF
+
+ocw eval eval.ocw --iterations 2
+ocw audit latest
+```
+
 Review a GitHub PR without posting anything:
 
 ```bash
@@ -144,6 +159,9 @@ ocw show latest --summary
 ocw show latest --diff
 ocw manifest latest --json
 ocw audit latest
+ocw report latest --markdown
+ocw report latest --html --out reports/ocw.html
+ocw report latest --sarif --out reports/ocw.sarif
 ocw clean --days 14 --dry-run
 ocw clean --days 14 --yes
 ```
@@ -154,6 +172,26 @@ Safely apply an isolated patch draft:
 ocw --worktree patch "Draft the fix"
 ocw apply latest --check
 ocw apply latest
+```
+
+Add a project policy gate:
+
+```bash
+ocw policy init strict
+ocw policy check latest
+```
+
+Install a GitHub CLI wrapper:
+
+```bash
+ocw gh-extension install
+gh ocw pr review 123
+```
+
+Add OpenSSF Scorecard scanning:
+
+```bash
+ocw security init
 ```
 
 Pass through OpenCode cost and server commands:
@@ -194,9 +232,26 @@ ocw_last
 ocw_show
 ocw_manifest
 ocw_audit
+ocw_report
+ocw_eval
+ocw_doctor
 ocw_apply_check
 ocw_apply
 ocw_stats
+```
+
+It also exposes latest-run resources and prompt templates:
+
+```text
+ocw://latest/summary
+ocw://latest/metadata
+ocw://latest/manifest
+ocw://latest/audit
+
+ocw-review-diff
+ocw-patch-small
+ocw-pr-review
+ocw-eval
 ```
 
 Claude Code:
@@ -444,7 +499,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit output, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
+The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report output, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 
@@ -471,8 +526,8 @@ make release-check
 Tag releases with signed tags:
 
 ```bash
-git tag -s v0.6.0-alpha -m "v0.6.0-alpha"
-git push origin v0.6.0-alpha
+git tag -s v0.7.0-alpha -m "v0.7.0-alpha"
+git push origin v0.7.0-alpha
 ```
 
 The GitHub release workflow publishes `dist/ocw-<version>.tar.gz` and its checksum for `v*` tags.

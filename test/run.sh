@@ -88,7 +88,7 @@ test_help_and_doctor() {
   local output
   "$OCW" --help >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
-  grep -Fq 'ocw 0.6.0-alpha' <<< "$output"
+  grep -Fq 'ocw 0.7.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
@@ -607,6 +607,77 @@ EOF
   assert_contains "$audit_output" "all batch workers exited 0"
 }
 
+test_extended_cli_features() {
+  local repo="$TMP_ROOT/extended"
+  local codex_skills="$TMP_ROOT/extended-codex-skills"
+  local claude_skills="$TMP_ROOT/extended-claude-skills"
+  local opencode_skills="$TMP_ROOT/extended-opencode-skills"
+  local agents_skills="$TMP_ROOT/extended-agents-skills"
+  local doctor_json audit_output policy_output gh_dir
+  make_repo "$repo"
+  cd "$repo"
+
+  doctor_json="$TMP_ROOT/doctor.json"
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_OUTPUT_ROOT=".out" \
+    OCW_CODEX_SKILLS_DIR="$codex_skills" \
+    OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
+    "$OCW" doctor --deep --json --fix > "$doctor_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$doctor_json"
+  assert_contains "$doctor_json" '"schema_version": "ocw.doctor.v1"'
+  assert_file "$codex_skills/opencode-worker/SKILL.md"
+
+  OCW_TEST_STAMP="extended-cheap" run_ocw cheap "extended report" >/dev/null
+  OCW_OUTPUT_ROOT=".out" "$OCW" report latest --json --out reports/report.json >/dev/null
+  OCW_OUTPUT_ROOT=".out" "$OCW" report latest --html --out reports/report.html >/dev/null
+  OCW_OUTPUT_ROOT=".out" "$OCW" report latest --junit --out reports/report.xml >/dev/null
+  OCW_OUTPUT_ROOT=".out" "$OCW" report latest --sarif --out reports/report.sarif >/dev/null
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" reports/report.json
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" reports/report.sarif
+  assert_contains reports/report.json '"schema_version": "ocw.report.v1"'
+  assert_contains reports/report.html "<h1>OCW report"
+  assert_contains reports/report.xml '<testsuite name="ocw"'
+
+  cat > eval.ocw <<'EOF'
+cheap|Return MOCK_OK for eval|MOCK_OK
+review|Return MOCK_OK for review eval|MOCK_OK
+EOF
+  OCW_TEST_STAMP="extended-eval" run_ocw eval eval.ocw --iterations 1 >/dev/null
+  assert_file ".out/extended-eval-eval/eval.md"
+  assert_file ".out/extended-eval-eval/eval.tsv"
+  assert_contains ".out/extended-eval-eval/eval.tsv" "MOCK_OK"
+  audit_output="$TMP_ROOT/eval-audit.txt"
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
+  assert_contains "$audit_output" "overall: ok"
+  assert_contains "$audit_output" "all eval expectations are present"
+
+  "$OCW" agents sync --force >/dev/null
+  "$OCW" agents doctor >/dev/null
+  "$OCW" agents diff >/dev/null
+  assert_file ".opencode/agents/ocw-patcher.md"
+
+  "$OCW" policy init strict --force >/dev/null
+  policy_output="$TMP_ROOT/policy.txt"
+  "$OCW" policy show > "$policy_output"
+  assert_contains "$policy_output" 'profile = "strict"'
+  OCW_OUTPUT_ROOT=".out" "$OCW" policy check latest > "$policy_output"
+  assert_contains "$policy_output" "policy: ok"
+
+  gh_dir="$TMP_ROOT/gh-ext"
+  "$OCW" gh-extension install --dir "$gh_dir" >/dev/null
+  assert_file "$gh_dir/gh-ocw"
+  assert_contains "$gh_dir/gh-ocw" 'exec ocw "$@"'
+
+  "$OCW" security policy > "$TMP_ROOT/security-policy.txt"
+  assert_contains "$TMP_ROOT/security-policy.txt" "Scorecard"
+  "$OCW" security init --force >/dev/null
+  assert_file ".github/workflows/scorecard.yml"
+  assert_contains ".github/workflows/scorecard.yml" "ossf/scorecard-action"
+  assert_contains ".github/workflows/scorecard.yml" "actions/checkout@v6"
+}
+
 test_pr_summary_command() {
   local repo="$TMP_ROOT/pr-summary"
   make_repo "$repo"
@@ -684,6 +755,7 @@ run_test "skill installer" test_skill_installer
 run_test "agent pack install" test_agent_pack_install
 run_test "bench command" test_bench_command
 run_test "batch command" test_batch_command
+run_test "extended cli features" test_extended_cli_features
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
 run_test "mcp server" test_mcp_server
