@@ -158,6 +158,14 @@ function createClient(repo) {
     assert.equal(show.structuredContent.status, 0);
     assert.match(show.structuredContent.stdout, /MOCK_OK/);
 
+    const missingShow = await client.request('tools/call', {
+      name: 'ocw_show',
+      arguments: { ...common, ref: 'missing-run', view: 'summary' },
+    });
+    assert.equal(missingShow.isError, true);
+    assert.notEqual(missingShow.structuredContent.status, 0);
+    assert.equal(missingShow.structuredContent.error_code, 'not_found');
+
     const manifest = await client.request('tools/call', {
       name: 'ocw_manifest',
       arguments: { ...common, ref: 'latest' },

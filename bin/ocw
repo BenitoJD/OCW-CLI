@@ -55,8 +55,10 @@ Usage:
   ocw report [latest|run-dir] [--markdown|--html|--json|--junit|--sarif] [--out FILE]
   ocw policy init|show|check [options]
   ocw gh-extension install [--dir DIR] [--force]
-  ocw security init|scorecard|policy [options]
+  ocw homebrew formula [--version VERSION] [--sha256 SHA] [--out FILE]
+  ocw security init|scorecard|policy|badge|eval [options]
   ocw support bundle [--out FILE] [--include-summary]
+  ocw trace [latest|run-dir] [--json]
   ocw mcp-config [codex|claude|opencode|all]
   ocw completions [bash|zsh|fish]
   ocw mcp
@@ -120,6 +122,88 @@ PR output:
     summary.md
     metadata.txt
 EOF
+}
+
+known_commands() {
+  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
+}
+
+suggest_command_name() {
+  local input="$1"
+  awk -v input="$input" -v commands="$(known_commands)" '
+    function min(a, b, c) {
+      m = a
+      if (b < m) m = b
+      if (c < m) m = c
+      return m
+    }
+    function lev(a, b, i, j, cost, la, lb) {
+      la = length(a)
+      lb = length(b)
+      for (i = 0; i <= la; i++) d[i,0] = i
+      for (j = 0; j <= lb; j++) d[0,j] = j
+      for (i = 1; i <= la; i++) {
+        for (j = 1; j <= lb; j++) {
+          cost = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+          d[i,j] = min(d[i-1,j] + 1, d[i,j-1] + 1, d[i-1,j-1] + cost)
+        }
+      }
+      return d[la,lb]
+    }
+    BEGIN {
+      split(commands, list, " ")
+      best = 999
+      bestcmd = ""
+      for (i in list) {
+        score = lev(input, list[i])
+        if (score < best) {
+          best = score
+          bestcmd = list[i]
+        }
+      }
+      if (best <= 3) print bestcmd
+    }
+  '
+}
+
+unknown_command() {
+  local command="$1"
+  local suggestion
+
+  suggestion="$(suggest_command_name "$command")"
+  printf 'ocw: unknown command: %s\n' "$command" >&2
+  if [[ -n "$suggestion" ]]; then
+    printf 'Did you mean: ocw %s\n' "$suggestion" >&2
+  fi
+  printf "Run \`ocw help\` for available commands.\n" >&2
+  exit 2
+}
+
+help_command() {
+  local topic="${1:-}"
+
+  if [[ -z "$topic" ]]; then
+    usage
+    return
+  fi
+
+  case "$topic" in
+    cheap|explore|scan|review|patch)
+      usage
+      ;;
+    help)
+      printf 'Usage: ocw help [command]\n'
+      ;;
+    version)
+      printf 'Usage: ocw version\n'
+      ;;
+    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|models|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|mcp-config|completions|mcp)
+      "$OCW_SELF" "$topic" --help
+      ;;
+    *)
+      unknown_command "$topic"
+      ;;
+  esac
 }
 
 die() {
@@ -2260,6 +2344,122 @@ report_command() {
   return "$audit_status"
 }
 
+trace_command() {
+  local root="$1"
+  shift
+  local ref="latest"
+  local json=0
+  local run_dir metadata_file mode status created_at first file rel bytes sha key value line resolve_status
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        json=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw trace [latest|run-dir] [--json]\n'
+        return
+        ;;
+      -*)
+        die "unknown trace option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+      ;;
+    esac
+  done
+
+  set +e
+  run_dir="$(resolve_run_dir "$root" "$ref" 2>&1)"
+  resolve_status=$?
+  set -e
+  if [[ "$resolve_status" -ne 0 ]]; then
+    if [[ "$json" -eq 1 ]]; then
+      printf '{\n'
+      printf '  "schema_version": "ocw.trace.v1",\n'
+      printf '  "ok": false,\n'
+      printf '  "error_code": "not_found",\n'
+      printf '  "error": '
+      json_string "$run_dir"
+      printf '\n}\n'
+    else
+      printf '%s\n' "$run_dir" >&2
+    fi
+    return "$resolve_status"
+  fi
+  metadata_file="$run_dir/metadata.txt"
+  mode="$(metadata_value "$metadata_file" "mode")"
+  status="$(metadata_value "$metadata_file" "status")"
+  created_at="$(metadata_value "$metadata_file" "created_at")"
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.trace.v1",\n'
+    printf '  "run_dir": '
+    json_string "$run_dir"
+    printf ',\n  "mode": '
+    json_string "$mode"
+    printf ',\n  "status": '
+    json_string "$status"
+    printf ',\n  "created_at": '
+    json_string "$created_at"
+    printf ',\n  "metadata": {\n'
+    first=1
+    if [[ -f "$metadata_file" ]]; then
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        if [[ "$first" -eq 0 ]]; then
+          printf ',\n'
+        fi
+        printf '    '
+        json_string "$key"
+        printf ': '
+        json_string "$value"
+        first=0
+      done < "$metadata_file"
+    fi
+    printf '\n  },\n  "events": [\n'
+    first=1
+    while IFS= read -r file; do
+      [[ -n "$file" ]] || continue
+      rel="${file#"$run_dir"/}"
+      bytes="$(file_size_bytes "$file")"
+      sha="$(file_sha256 "$file")"
+      if [[ "$first" -eq 0 ]]; then
+        printf ',\n'
+      fi
+      printf '    { "type": "artifact", "name": '
+      json_string "$rel"
+      printf ', "bytes": %s, "sha256": ' "$bytes"
+      json_string "$sha"
+      printf ' }'
+      first=0
+    done <<EOF
+$(find "$run_dir" -type f -print | sort)
+EOF
+    printf '\n  ]\n}\n'
+    return
+  fi
+
+  printf 'OCW trace: %s\n' "$run_dir"
+  printf 'mode: %s\n' "${mode:-unknown}"
+  printf 'status: %s\n' "${status:-unknown}"
+  printf 'created_at: %s\n\n' "${created_at:-unknown}"
+  printf 'artifacts:\n'
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    rel="${file#"$run_dir"/}"
+    bytes="$(file_size_bytes "$file")"
+    printf '  - %s (%s bytes)\n' "$rel" "$bytes"
+  done <<EOF
+$(find "$run_dir" -type f -print | sort)
+EOF
+}
+
 print_default_policy() {
   local profile="${1:-balanced}"
   cat <<EOF
@@ -3552,6 +3752,110 @@ EOF
   printf 'Run: gh ocw --help\n'
 }
 
+homebrew_formula_command() {
+  local subcommand="${1:-formula}"
+  shift || true
+  local version="$VERSION"
+  local sha256=""
+  local url=""
+  local out_file=""
+  local dist_sha="$OCW_HOME/dist/ocw-$VERSION.tar.gz.sha256"
+  local tmp
+
+  case "$subcommand" in
+    formula)
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage: ocw homebrew formula [--version VERSION] [--sha256 SHA] [--url URL] [--out FILE]
+
+Prints a Homebrew formula for an OCW GitHub Release archive.
+EOF
+      return
+      ;;
+    *)
+      die "unknown homebrew command: $subcommand"
+      ;;
+  esac
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version)
+        [[ $# -ge 2 ]] || die "--version requires a value"
+        version="${2#v}"
+        shift 2
+        ;;
+      --sha256)
+        [[ $# -ge 2 ]] || die "--sha256 requires a value"
+        sha256="$2"
+        shift 2
+        ;;
+      --url)
+        [[ $# -ge 2 ]] || die "--url requires a value"
+        url="$2"
+        shift 2
+        ;;
+      --out)
+        [[ $# -ge 2 ]] || die "--out requires a value"
+        out_file="$2"
+        shift 2
+        ;;
+      -h|--help)
+        printf 'Usage: ocw homebrew formula [--version VERSION] [--sha256 SHA] [--url URL] [--out FILE]\n'
+        return
+        ;;
+      *)
+        die "unknown homebrew formula option: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "$sha256" && -f "$dist_sha" ]]; then
+    sha256="$(awk '{ print $1 }' "$dist_sha")"
+  fi
+  [[ -n "$sha256" ]] || sha256="REPLACE_WITH_SHA256"
+  [[ -n "$url" ]] || url="https://github.com/BenitoJD/OCW-CLI/releases/download/v$version/ocw-$version.tar.gz"
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-homebrew.XXXXXX")"
+  cat > "$tmp" <<EOF
+class Ocw < Formula
+  desc "OpenCode Go workers for Codex-style orchestration"
+  homepage "https://github.com/BenitoJD/OCW-CLI"
+  url "$url"
+  sha256 "$sha256"
+  license "MIT"
+
+  depends_on "git"
+  depends_on "node"
+
+  def install
+    libexec.install Dir["*"]
+    bin.install_symlink libexec/"bin/ocw" => "ocw"
+  end
+
+  def caveats
+    <<~EOS
+      OCW requires OpenCode on PATH for worker runs.
+      Run: ocw doctor --deep
+    EOS
+  end
+
+  test do
+    assert_match "$version", shell_output("#{bin}/ocw version")
+  end
+end
+EOF
+
+  if [[ -n "$out_file" ]]; then
+    mkdir -p "$(dirname "$out_file")"
+    mv "$tmp" "$out_file"
+    printf 'Homebrew formula written: %s\n' "$out_file"
+  else
+    cat "$tmp"
+    rm -f "$tmp"
+  fi
+}
+
 github_slug_from_remote() {
   local remote url slug
   remote="$("$GIT_BIN" remote get-url origin 2>/dev/null || true)"
@@ -3566,10 +3870,14 @@ github_slug_from_remote() {
 }
 
 security_command() {
+  local root="$1"
+  shift || true
   local subcommand="${1:-policy}"
   shift || true
   local force=0
   local workflow=".github/workflows/scorecard.yml"
+  local eval_file="$OCW_HOME/test/security/prompts.ocw"
+  local -a eval_args=()
   local slug
 
   case "$subcommand" in
@@ -3650,12 +3958,54 @@ OCW security policy recommendations:
 - Use `ocw security init` to add OpenSSF Scorecard scanning to GitHub Actions.
 EOF
       ;;
+    badge)
+      cat <<'EOF'
+OpenSSF Best Practices Badge:
+  https://www.bestpractices.dev/
+
+Suggested project target:
+  https://www.bestpractices.dev/en/projects/new
+
+Use the badge to self-certify release, testing, vulnerability reporting, and secure-development practices.
+EOF
+      ;;
+    eval)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --file)
+            [[ $# -ge 2 ]] || die "--file requires a value"
+            eval_file="$2"
+            shift 2
+            ;;
+          --models|--iterations|--agent|--variant|--attach)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            eval_args+=("$1" "$2")
+            shift 2
+            ;;
+          -h|--help)
+            cat <<'EOF'
+Usage: ocw security eval [--file FILE] [--models CSV] [--iterations N]
+
+Runs OCW's prompt-injection and untrusted-content eval file through `ocw eval`.
+EOF
+            return
+            ;;
+          *)
+            die "unknown security eval option: $1"
+            ;;
+        esac
+      done
+      [[ -f "$eval_file" ]] || die "security eval file not found: $eval_file"
+      eval_command "$root" "$eval_file" "${eval_args[@]}"
+      ;;
     -h|--help|help)
       cat <<'EOF'
 Usage:
   ocw security init [--force]
   ocw security scorecard
   ocw security policy
+  ocw security badge
+  ocw security eval [--file FILE] [--models CSV] [--iterations N]
 EOF
       ;;
     *)
@@ -3818,6 +4168,64 @@ EOF
   printf 'OCW support bundle: %s\n' "$archive"
 }
 
+mcp_doctor_command() {
+  local json=0
+  local status=0
+  local node_path=""
+  local server="$OCW_HOME/mcp/ocw-mcp.js"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        json=1
+        shift
+        ;;
+      -h|--help)
+        printf 'Usage: ocw mcp doctor [--json]\n'
+        return
+        ;;
+      *)
+        die "unknown mcp doctor option: $1"
+        ;;
+    esac
+  done
+
+  if have_command node; then
+    node_path="$(command -v node)"
+    node --check "$server" >/dev/null 2>&1 || status=1
+  else
+    status=1
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.mcp.doctor.v1",\n'
+    printf '  "server": '
+    json_string "$server"
+    printf ',\n  "node": '
+    json_string "$node_path"
+    printf ',\n  "ok": %s,\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
+    printf '  "capabilities": ["tools", "resources", "prompts"],\n'
+    printf '  "tools": ["ocw_run", "ocw_last", "ocw_show", "ocw_manifest", "ocw_audit", "ocw_report", "ocw_eval", "ocw_doctor", "ocw_apply_check", "ocw_apply", "ocw_stats"]\n'
+    printf '}\n'
+  else
+    printf 'OCW MCP server: %s\n' "$server"
+    if [[ -n "$node_path" ]]; then
+      printf 'node: %s\n' "$node_path"
+    else
+      printf 'node: missing\n'
+    fi
+    if [[ "$status" -eq 0 ]]; then
+      printf 'mcp: ok\n'
+      printf 'capabilities: tools, resources, prompts\n'
+    else
+      printf 'mcp: failed\n'
+    fi
+  fi
+
+  return "$status"
+}
+
 mcp_config_command() {
   local target="${1:-all}"
 
@@ -3893,7 +4301,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security support mcp-config completions mcp version"
+  commands="init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -3929,8 +4337,12 @@ _ocw()
       COMPREPLY=( $(compgen -W "install path" -- "$cur") )
       return 0
       ;;
+    homebrew)
+      COMPREPLY=( $(compgen -W "formula" -- "$cur") )
+      return 0
+      ;;
     security)
-      COMPREPLY=( $(compgen -W "init scorecard policy" -- "$cur") )
+      COMPREPLY=( $(compgen -W "init scorecard policy badge eval" -- "$cur") )
       return 0
       ;;
     support)
@@ -3951,7 +4363,7 @@ _ocw() {
   commands=(
     init uninstall config last show manifest audit apply clean stats serve doctor models
     agent-pack agents bench batch eval pr report policy gh-extension security
-    support mcp-config completions mcp version
+    homebrew support trace mcp-config completions mcp help version
   )
   modes=(cheap explore scan review patch)
 
@@ -3973,7 +4385,8 @@ _ocw() {
         agents) _values 'action' sync diff doctor ;;
         policy) _values 'action' init show check ;;
         gh-extension) _values 'action' install path ;;
-        security) _values 'action' init scorecard policy ;;
+        homebrew) _values 'action' formula ;;
+        security) _values 'action' init scorecard policy badge eval ;;
         support) _values 'action' bundle ;;
       esac
       ;;
@@ -3985,7 +4398,7 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension security support mcp-config completions mcp version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor models agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace mcp-config completions mcp help version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
@@ -3993,7 +4406,8 @@ complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show va
 complete -c ocw -n "__fish_seen_subcommand_from agents" -f -a "sync diff doctor"
 complete -c ocw -n "__fish_seen_subcommand_from policy" -f -a "init show check"
 complete -c ocw -n "__fish_seen_subcommand_from gh-extension" -f -a "install path"
-complete -c ocw -n "__fish_seen_subcommand_from security" -f -a "init scorecard policy"
+complete -c ocw -n "__fish_seen_subcommand_from homebrew" -f -a "formula"
+complete -c ocw -n "__fish_seen_subcommand_from security" -f -a "init scorecard policy badge eval"
 complete -c ocw -n "__fish_seen_subcommand_from support" -f -a "bundle"
 EOF
       ;;
@@ -4030,8 +4444,13 @@ fi
 out_base="${OCW_OUTPUT_ROOT:-${OCW_CONFIG_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}}"
 
 case "$1" in
-  -h|--help|help)
+  -h|--help)
     usage
+    exit 0
+    ;;
+  help)
+    shift
+    help_command "$@"
     exit 0
     ;;
   version|--version)
@@ -4143,14 +4562,24 @@ case "$1" in
     gh_extension_command "$@"
     exit $?
     ;;
+  homebrew)
+    shift
+    homebrew_formula_command "$@"
+    exit $?
+    ;;
   security)
     shift
-    security_command "$@"
+    security_command "$out_base" "$@"
     exit $?
     ;;
   support)
     shift
     support_command "$@"
+    exit $?
+    ;;
+  trace)
+    shift
+    trace_command "$out_base" "$@"
     exit $?
     ;;
   mcp-config)
@@ -4168,8 +4597,13 @@ case "$1" in
     if [[ $# -gt 0 ]]; then
       case "$1" in
         -h|--help|help)
-          printf 'Usage: ocw mcp\n\nStarts the OCW stdio MCP server.\n'
+          printf 'Usage: ocw mcp [doctor --json]\n\nStarts the OCW stdio MCP server.\n'
           exit 0
+          ;;
+        doctor)
+          shift
+          mcp_doctor_command "$@"
+          exit $?
           ;;
         *)
           die "unknown mcp option: $1"
@@ -4185,6 +4619,11 @@ case "$1" in
     "$OPENCODE_BIN" models opencode-go "$@"
     exit $?
     ;;
+esac
+
+case "$1" in
+  cheap|explore|scan|review|patch|-*) ;;
+  *) unknown_command "$1" ;;
 esac
 
 mode=""

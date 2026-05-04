@@ -34,7 +34,20 @@ Install from a GitHub Release:
 curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash
 ```
 
-The release installer downloads the tarball, verifies its SHA-256 file, and runs the packaged installer.
+The release installer downloads the tarball, verifies its SHA-256 file, verifies GitHub artifact attestations when `gh` is installed, and runs the packaged installer.
+
+Require attestation verification:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash -s -- --require-attestation
+```
+
+Generate a Homebrew formula for a tap:
+
+```bash
+make package
+ocw homebrew formula --out Formula/ocw.rb
+```
 
 Requirements:
 
@@ -176,6 +189,7 @@ ocw show latest --summary
 ocw show latest --diff
 ocw manifest latest --json
 ocw audit latest
+ocw trace latest --json
 ocw report latest --markdown
 ocw report latest --html --out reports/ocw.html
 ocw report latest --sarif --out reports/ocw.sarif
@@ -209,6 +223,8 @@ Add OpenSSF Scorecard scanning:
 
 ```bash
 ocw security init
+ocw security badge
+ocw security eval
 ```
 
 Create a sanitized support bundle for bug reports:
@@ -231,6 +247,7 @@ Start the MCP server:
 
 ```bash
 ocw mcp
+ocw mcp doctor --json
 ```
 
 Print copy-paste MCP config for common clients:
@@ -524,7 +541,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report output, support bundle redaction, release installer dry-runs, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

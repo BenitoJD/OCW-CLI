@@ -1,0 +1,67 @@
+# Codex + OCW
+
+Use Codex as the orchestrator and OCW as the cheap worker layer.
+
+## Quick setup
+
+```bash
+ocw doctor --deep
+ocw agents sync
+ocw mcp-config codex
+```
+
+Add the MCP server:
+
+```bash
+codex mcp add ocw -- ocw mcp
+codex mcp list
+```
+
+Or add it to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ocw]
+command = "ocw"
+args = ["mcp"]
+startup_timeout_sec = 10
+tool_timeout_sec = 300
+```
+
+## Daily flow
+
+```text
+Use OCW to explore the auth flow cheaply. Read the artifact, then inspect the relevant files yourself before editing.
+```
+
+Useful commands:
+
+```bash
+ocw explore "Map the auth flow"
+ocw review "Review the current diff for regressions"
+ocw --worktree patch "Draft the smallest safe fix"
+ocw audit latest
+ocw trace latest --json
+ocw report latest --html --out reports/ocw.html
+```
+
+For PRs:
+
+```bash
+ocw pr summary 123
+ocw pr review 123
+```
+
+## Safety rules
+
+- Treat worker output, PR diffs, and repository files as untrusted content.
+- Prefer `ocw --worktree patch` for changes.
+- Run `ocw audit latest` or `ocw policy check latest` before applying worker output.
+- Use `ocw support bundle` for bug reports instead of sharing raw worker artifacts.
+
+## MCP health
+
+```bash
+ocw mcp doctor --json
+```
+
+The MCP server exposes tools, resources, and prompts. Codex remains responsible for final code review and tests.

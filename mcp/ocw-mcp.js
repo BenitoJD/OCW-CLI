@@ -342,6 +342,7 @@ function runOcw(ocwArgs, args) {
   const stderr = truncate(result.stderr || '', limit);
   const status = result.status === null ? 1 : result.status;
   const outputDirMatch = (result.stdout || '').match(/OCW (?:output|benchmark output|batch output|eval output|PR [a-z]+ output): (.+)/);
+  const errorCode = classifyError(status, result.stderr || result.stdout || '');
 
   return {
     status,
@@ -352,8 +353,20 @@ function runOcw(ocwArgs, args) {
     stderr: stderr.text,
     stdout_truncated: stdout.truncated,
     stderr_truncated: stderr.truncated,
+    error_code: errorCode,
     output_dir: outputDirMatch ? outputDirMatch[1].trim() : undefined,
   };
+}
+
+function classifyError(status, text) {
+  if (status === 0) return undefined;
+  if (/required command not found/i.test(text)) return 'missing_dependency';
+  if (/git worktree is not clean/i.test(text)) return 'dirty_worktree';
+  if (/(?:OCW run|output root|eval file|file|directory) not found/i.test(text)) return 'not_found';
+  if (/not found: [^\n]+/i.test(text)) return 'not_found';
+  if (/unknown (command|option|mode)/i.test(text)) return 'invalid_arguments';
+  if (/audit|policy/i.test(text)) return 'policy_failed';
+  return 'command_failed';
 }
 
 function toolResponse(name, result) {

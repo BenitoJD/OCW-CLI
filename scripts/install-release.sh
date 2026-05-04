@@ -5,11 +5,12 @@ REPO="${OCW_REPO:-BenitoJD/OCW-CLI}"
 VERSION="${OCW_VERSION:-latest}"
 INSTALL_DIR="${OCW_INSTALL_DIR:-$HOME/.local/bin}"
 VERIFY=1
+ATTESTATION="${OCW_VERIFY_ATTESTATION:-auto}"
 DRY_RUN=0
 
 usage() {
   cat <<'EOF'
-Usage: install-release.sh [--repo OWNER/REPO] [--version VERSION] [--install-dir DIR] [--no-verify] [--dry-run]
+Usage: install-release.sh [--repo OWNER/REPO] [--version VERSION] [--install-dir DIR] [--no-verify] [--require-attestation] [--no-attestation] [--dry-run]
 
 Downloads an OCW release archive from GitHub Releases, verifies the SHA-256 file,
 and runs the packaged installer.
@@ -18,6 +19,7 @@ Environment:
   OCW_REPO         Default GitHub repo, owner/name
   OCW_VERSION      Release tag or version. Defaults to latest
   OCW_INSTALL_DIR  Install directory. Defaults to ~/.local/bin
+  OCW_VERIFY_ATTESTATION  auto, require, or off. Defaults to auto
 EOF
 }
 
@@ -77,6 +79,14 @@ while [[ $# -gt 0 ]]; do
       VERIFY=0
       shift
       ;;
+    --require-attestation)
+      ATTESTATION="require"
+      shift
+      ;;
+    --no-attestation)
+      ATTESTATION="off"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -93,6 +103,10 @@ done
 
 require_command curl
 require_command tar
+case "$ATTESTATION" in
+  auto|require|off) ;;
+  *) die "OCW_VERIFY_ATTESTATION must be auto, require, or off" ;;
+esac
 
 if [[ "$VERSION" == "latest" ]]; then
   VERSION="$(resolve_latest_version "$REPO")"
@@ -108,10 +122,16 @@ printf 'repo: %s\n' "$REPO"
 printf 'version: %s\n' "$VERSION"
 printf 'asset: %s\n' "$ARCHIVE"
 printf 'install_dir: %s\n' "$INSTALL_DIR"
+printf 'attestation: %s\n' "$ATTESTATION"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   printf 'dry run: would download %s/%s\n' "$BASE_URL" "$ARCHIVE"
   [[ "$VERIFY" -eq 1 ]] && printf 'dry run: would verify %s/%s\n' "$BASE_URL" "$CHECKSUM"
+  case "$ATTESTATION" in
+    auto) printf 'dry run: would verify GitHub artifact attestation if gh is installed\n' ;;
+    require) printf 'dry run: would require GitHub artifact attestation verification\n' ;;
+    off) printf 'dry run: would skip GitHub artifact attestation verification\n' ;;
+  esac
   printf 'dry run: would run packaged install.sh\n'
   exit 0
 fi
@@ -130,6 +150,24 @@ if [[ "$VERIFY" -eq 1 ]]; then
     sha256_check "$CHECKSUM"
   )
 fi
+
+case "$ATTESTATION" in
+  require)
+    require_command gh
+    gh attestation verify "$TMP_DIR/$ARCHIVE" --repo "$REPO"
+    ;;
+  auto)
+    if have_command gh; then
+      if ! gh attestation verify "$TMP_DIR/$ARCHIVE" --repo "$REPO"; then
+        die "artifact attestation verification failed; pass --no-attestation only if you accept this risk"
+      fi
+    else
+      printf 'Note: gh not found; skipping artifact attestation verification. Pass --require-attestation to make this mandatory.\n' >&2
+    fi
+    ;;
+  off)
+    ;;
+esac
 
 tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
 OCW_INSTALL_DIR="$INSTALL_DIR" "$TMP_DIR/ocw-$ASSET_VERSION/install.sh"

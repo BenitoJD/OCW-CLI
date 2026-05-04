@@ -119,7 +119,7 @@ check_completions() {
   bash -n "$out_dir/ocw.bash"
   assert_contains "$out_dir/ocw.bash" "_ocw()"
   assert_contains "$out_dir/ocw.zsh" "summary review"
-  assert_contains "$out_dir/ocw.fish" "mcp version"
+  assert_contains "$out_dir/ocw.fish" "mcp help version"
 }
 
 negative_matrix() {
@@ -143,8 +143,12 @@ negative_matrix() {
     "$ocw" report --help >/dev/null
     "$ocw" policy --help >/dev/null
     "$ocw" gh-extension --help >/dev/null
+    "$ocw" homebrew --help >/dev/null
     "$ocw" security --help >/dev/null
     "$ocw" support --help >/dev/null
+    "$ocw" trace --help >/dev/null
+    "$ocw" help support >/dev/null
+    "$ocw" mcp doctor --json >/dev/null
     "$ocw" mcp-config --help >/dev/null
     "$ocw" completions bash >/dev/null
     "$ocw" completions zsh >/dev/null
@@ -156,6 +160,7 @@ negative_matrix() {
     expect_fail "$ocw" cheap --unknown task
     expect_fail "$ocw" batch missing-file.ocw
     expect_fail "$ocw" eval missing-file.ocw
+    expect_fail "$ocw" suport
     expect_fail "$ocw" clean --days nope
     printf '[defaults]\nworktree = nope\n' > bad.ocw.toml
     expect_fail "$ocw" config validate --file bad.ocw.toml
@@ -301,10 +306,17 @@ EVALS
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/audit.json"
     "$ocw" support bundle --out "$TMP_ROOT/support.tgz" >/dev/null
     assert_file "$TMP_ROOT/support.tgz"
+    "$ocw" trace latest --json > "$TMP_ROOT/trace.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/trace.json"
+    "$ocw" homebrew formula --version "$VERSION" --sha256 "$(printf 'a%.0s' {1..64})" --out "$TMP_ROOT/ocw.rb" >/dev/null
+    assert_file "$TMP_ROOT/ocw.rb"
+    assert_contains "$TMP_ROOT/ocw.rb" "class Ocw < Formula"
     "$ocw" show latest --summary >/dev/null
     "$ocw" show latest --path >/dev/null
     latest="$("$ocw" last)"
     [[ "$(basename "$latest")" == "g-prrev-pr-review" ]] || fail "unexpected latest: $latest"
+    OCW_TEST_CREATED_AT="2026-05-04T00:00:10Z" OCW_TEST_STAMP=g-security-eval "$ocw" security eval --iterations 1 >/dev/null
+    assert_file ".out/g-security-eval-eval/eval.tsv"
 
     "$ocw" stats --days 7 > "$TMP_ROOT/stats.txt"
     "$ocw" serve --port 4096 > "$TMP_ROOT/serve.txt"

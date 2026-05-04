@@ -85,13 +85,22 @@ run_test() {
 }
 
 test_help_and_doctor() {
-  local output
+  local output status
   "$OCW" --help >/dev/null
+  "$OCW" help config >/dev/null
+  "$OCW" help mcp >/dev/null
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" doctor)"
   grep -Fq 'ocw 0.7.0-alpha' <<< "$output"
   output="$(OCW_OPENCODE_BIN="$MOCK_OPENCODE" OCW_OUTPUT_ROOT="$TMP_ROOT/doctor-out" "$OCW" doctor --deep)"
   grep -Fq 'doctor deep: ok' <<< "$output"
   grep -Fq 'opencode-go model count: 5' <<< "$output"
+
+  set +e
+  "$OCW" suport > "$TMP_ROOT/help-suggest.out" 2> "$TMP_ROOT/help-suggest.err"
+  status=$?
+  set -e
+  [[ "$status" -eq 2 ]] || fail "expected unknown command status 2, got $status"
+  assert_contains "$TMP_ROOT/help-suggest.err" "Did you mean: ocw support"
 }
 
 test_default_routing() {
@@ -680,7 +689,7 @@ EOF
 
 test_config_support_and_release_installer() {
   local repo="$TMP_ROOT/config-support"
-  local validate_json invalid_status support_archive extract_dir install_plan
+  local validate_json invalid_status support_archive extract_dir install_plan formula mcp_json trace_json missing_trace_json trace_status
   make_repo "$repo"
   cd "$repo"
 
@@ -724,9 +733,40 @@ EOF
   [[ ! -f "$extract_dir/support/latest/summary.md" ]] || fail "support bundle included summary without opt-in"
 
   install_plan="$TMP_ROOT/install-release-plan.txt"
-  "$ROOT/scripts/install-release.sh" --version v0.7.0-alpha --dry-run > "$install_plan"
+  "$ROOT/scripts/install-release.sh" --version v0.7.0-alpha --dry-run --require-attestation > "$install_plan"
   assert_contains "$install_plan" "dry run: would download"
+  assert_contains "$install_plan" "would require GitHub artifact attestation verification"
   assert_contains "$install_plan" "ocw-0.7.0-alpha.tar.gz"
+
+  formula="$TMP_ROOT/ocw.rb"
+  "$OCW" homebrew formula --version 0.7.0-alpha --sha256 "$(printf 'a%.0s' {1..64})" --out "$formula" >/dev/null
+  assert_file "$formula"
+  assert_contains "$formula" "class Ocw < Formula"
+  assert_contains "$formula" "sha256 \"aaaaaaaa"
+
+  mcp_json="$TMP_ROOT/mcp-doctor.json"
+  "$OCW" mcp doctor --json > "$mcp_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$mcp_json"
+  assert_contains "$mcp_json" '"schema_version": "ocw.mcp.doctor.v1"'
+
+  trace_json="$TMP_ROOT/trace.json"
+  OCW_OUTPUT_ROOT=".out" "$OCW" trace latest --json > "$trace_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$trace_json"
+  assert_contains "$trace_json" '"schema_version": "ocw.trace.v1"'
+
+  missing_trace_json="$TMP_ROOT/trace-missing.json"
+  set +e
+  OCW_OUTPUT_ROOT="$TMP_ROOT/no-runs-yet" "$OCW" trace latest --json > "$missing_trace_json"
+  trace_status=$?
+  set -e
+  [[ "$trace_status" -ne 0 ]] || fail "expected missing trace status to fail"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$missing_trace_json"
+  assert_contains "$missing_trace_json" '"ok": false'
+  assert_contains "$missing_trace_json" '"error_code": "not_found"'
+
+  OCW_TEST_STAMP="security-eval" run_ocw security eval --iterations 1 >/dev/null
+  assert_file ".out/security-eval-eval/eval.tsv"
+  assert_contains ".out/security-eval-eval/eval.tsv" "MOCK_OK"
 }
 
 test_pr_summary_command() {

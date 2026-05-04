@@ -15,6 +15,7 @@ files=(
   "$ROOT/scripts/release-check.sh"
   "$ROOT/scripts/gauntlet.sh"
   "$ROOT/scripts/install-release.sh"
+  "$ROOT/scripts/homebrew-formula.sh"
 )
 
 js_files=(
