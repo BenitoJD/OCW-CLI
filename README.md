@@ -43,6 +43,16 @@ ocw doctor
 ocw doctor --deep
 ```
 
+Uninstall:
+
+```bash
+ocw uninstall
+ocw uninstall --yes
+ocw uninstall --all --yes
+```
+
+`ocw uninstall` is a dry run by default. `--yes` removes the installed launcher and global skills. `--all --yes` also removes project OCW files in the current directory, including `.ocw.toml`, OCW project instructions, project skills, default OCW agent-pack files, and OCW `.gitignore` entries. Modified project instruction/config files are kept unless you pass `--force`.
+
 Bootstrap a project:
 
 ```bash
@@ -433,7 +443,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit output, shell completions, client config snippets, cleanup, stats/serve passthrough, PR review artifacts, MCP tools, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
+The tests cover model routing, overrides, project config, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit output, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent pack generation, benchmarks, and batch execution.
 
 Run the full local quality gate:
 

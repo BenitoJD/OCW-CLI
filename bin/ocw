@@ -33,6 +33,7 @@ ocw - OpenCode Go workers for Codex-style orchestration
 Usage:
   ocw [options] <explore|review|patch|scan|cheap> <task...>
   ocw init [options]
+  ocw uninstall [--bin] [--skills] [--project] [--all] [--dry-run] [--yes] [--force]
   ocw last [mode]
   ocw show [latest|run-dir] [--summary|--diff|--stat|--status|--metadata|--jsonl|--path]
   ocw manifest [latest|run-dir] [--json]
@@ -672,16 +673,8 @@ ensure_gitignore_entry() {
   printf '%s\n' "$entry" >> "$gitignore"
 }
 
-write_default_config() {
-  local target="$1"
-  local force="$2"
-
-  if [[ -e "$target" && "$force" -ne 1 ]]; then
-    printf 'Kept existing config: %s\n' "$target"
-    return
-  fi
-
-  cat > "$target" <<'EOF'
+print_default_config() {
+  cat <<'EOF'
 [models]
 cheap = "opencode-go/qwen3.5-plus"
 explore = "opencode-go/deepseek-v4-flash"
@@ -704,6 +697,18 @@ require_clean = false
 auto_approve = false
 # attach = "http://localhost:4096"
 EOF
+}
+
+write_default_config() {
+  local target="$1"
+  local force="$2"
+
+  if [[ -e "$target" && "$force" -ne 1 ]]; then
+    printf 'Kept existing config: %s\n' "$target"
+    return
+  fi
+
+  print_default_config > "$target"
 
   printf 'Installed config: %s\n' "$target"
 }
@@ -718,6 +723,250 @@ install_agent_skill() {
   mkdir -p "$target"
   cp "$source" "$target/SKILL.md"
   printf 'Installed %s skill: %s\n' "$label" "$target"
+}
+
+resolved_symlink_target() {
+  local link="$1"
+  local target dir
+
+  target="$(readlink "$link" 2>/dev/null || true)"
+  [[ -n "$target" ]] || return 1
+  case "$target" in
+    /*)
+      printf '%s\n' "$target"
+      ;;
+    *)
+      dir="$(cd "$(dirname "$link")" >/dev/null 2>&1 && pwd -P)"
+      printf '%s/%s\n' "$dir" "$target"
+      ;;
+  esac
+}
+
+uninstall_remove_path() {
+  local label="$1"
+  local target="$2"
+  local yes="$3"
+
+  if [[ ! -e "$target" && ! -L "$target" ]]; then
+    printf 'Not installed %s: %s\n' "$label" "$target"
+    return
+  fi
+
+  if [[ "$yes" -eq 1 ]]; then
+    rm -rf "$target"
+    printf 'Removed %s: %s\n' "$label" "$target"
+  else
+    printf 'Would remove %s: %s\n' "$label" "$target"
+  fi
+}
+
+uninstall_remove_file_if_matching() {
+  local label="$1"
+  local target="$2"
+  local template="$3"
+  local force="$4"
+  local yes="$5"
+
+  if [[ ! -e "$target" ]]; then
+    printf 'Not installed %s: %s\n' "$label" "$target"
+    return
+  fi
+
+  if [[ "$force" -ne 1 && ! -f "$template" ]]; then
+    printf 'Kept %s: template missing for comparison: %s\n' "$label" "$target"
+    return
+  fi
+
+  if [[ "$force" -ne 1 ]] && ! cmp -s "$target" "$template"; then
+    printf 'Kept modified %s: %s (pass --force to remove)\n' "$label" "$target"
+    return
+  fi
+
+  uninstall_remove_path "$label" "$target" "$yes"
+}
+
+uninstall_remove_gitignore_entries() {
+  local yes="$1"
+  local gitignore=".gitignore"
+  local tmp
+
+  [[ -f "$gitignore" ]] || {
+    printf 'Not installed gitignore entries: %s\n' "$gitignore"
+    return
+  }
+
+  if ! grep -Fxq ".codex/opencode-workers/" "$gitignore" && \
+    ! grep -Fxq ".codex/opencode-worktrees/" "$gitignore"; then
+    printf 'Not installed gitignore entries: %s\n' "$gitignore"
+    return
+  fi
+
+  if [[ "$yes" -ne 1 ]]; then
+    printf 'Would remove OCW gitignore entries: %s\n' "$gitignore"
+    return
+  fi
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-gitignore.XXXXXX")"
+  awk '$0 != ".codex/opencode-workers/" && $0 != ".codex/opencode-worktrees/" { print }' "$gitignore" > "$tmp"
+  mv "$tmp" "$gitignore"
+  printf 'Removed OCW gitignore entries: %s\n' "$gitignore"
+}
+
+uninstall_command() {
+  local remove_bin=1
+  local remove_skills=1
+  local remove_project=0
+  local scope_set=0
+  local yes=0
+  local force=0
+  local install_dir="${OCW_INSTALL_DIR:-$HOME/.local/bin}"
+  local bin_path
+  local bin_source="$OCW_HOME/bin/ocw"
+  local bin_target
+  local codex_skills_dir claude_skills_dir opencode_home_dir opencode_skills_dir agents_skills_dir
+  local config_template
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --bin)
+        if [[ "$scope_set" -eq 0 ]]; then
+          remove_bin=0
+          remove_skills=0
+          remove_project=0
+          scope_set=1
+        fi
+        remove_bin=1
+        shift
+        ;;
+      --skills)
+        if [[ "$scope_set" -eq 0 ]]; then
+          remove_bin=0
+          remove_skills=0
+          remove_project=0
+          scope_set=1
+        fi
+        remove_skills=1
+        shift
+        ;;
+      --project)
+        if [[ "$scope_set" -eq 0 ]]; then
+          remove_bin=0
+          remove_skills=0
+          remove_project=0
+          scope_set=1
+        fi
+        remove_project=1
+        shift
+        ;;
+      --all)
+        remove_bin=1
+        remove_skills=1
+        remove_project=1
+        scope_set=1
+        shift
+        ;;
+      --install-dir)
+        [[ $# -ge 2 ]] || die "--install-dir requires a value"
+        install_dir="$2"
+        shift 2
+        ;;
+      --dry-run)
+        yes=0
+        shift
+        ;;
+      --yes)
+        yes=1
+        shift
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw uninstall [--bin] [--skills] [--project] [--all] [--dry-run] [--yes] [--force]
+
+Default scope is --bin --skills. Without --yes, uninstall prints what it would remove.
+
+Scopes:
+  --bin          Remove the installed ocw launcher from ~/.local/bin or --install-dir
+  --skills       Remove global Codex, Claude Code, OpenCode, and Agents skills
+  --project      Remove project OCW files in the current directory
+  --all          Remove binary, global skills, and project OCW files
+
+Options:
+  --install-dir DIR  Override install directory for the ocw launcher
+  --dry-run          Print removal plan without deleting anything
+  --yes              Actually remove selected targets
+  --force            Remove modified project AGENTS.md, CLAUDE.md, or .ocw.toml
+EOF
+        return
+        ;;
+      *)
+        die "unknown uninstall option: $1"
+        ;;
+    esac
+  done
+
+  if [[ "$yes" -ne 1 ]]; then
+    printf 'OCW uninstall dry run. Pass --yes to remove selected targets.\n'
+  fi
+
+  if [[ "$remove_bin" -eq 1 ]]; then
+    bin_path="$install_dir/ocw"
+    if [[ -L "$bin_path" ]]; then
+      bin_target="$(resolved_symlink_target "$bin_path" || true)"
+      if [[ "$force" -eq 1 || "$bin_target" == "$bin_source" ]]; then
+        uninstall_remove_path "binary" "$bin_path" "$yes"
+      else
+        printf 'Kept binary: %s points to %s (pass --force to remove)\n' "$bin_path" "$bin_target"
+      fi
+    elif [[ -f "$bin_path" ]]; then
+      if [[ "$force" -eq 1 ]] || { [[ -f "$bin_source" ]] && cmp -s "$bin_path" "$bin_source"; }; then
+        uninstall_remove_path "binary" "$bin_path" "$yes"
+      else
+        printf 'Kept binary: %s is not the OCW launcher (pass --force to remove)\n' "$bin_path"
+      fi
+    else
+      uninstall_remove_path "binary" "$bin_path" "$yes"
+    fi
+  fi
+
+  if [[ "$remove_skills" -eq 1 ]]; then
+    codex_skills_dir="${OCW_CODEX_SKILLS_DIR:-${CODEX_HOME:-$HOME/.codex}/skills}"
+    claude_skills_dir="${OCW_CLAUDE_SKILLS_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills}"
+    opencode_home_dir="$(opencode_config_home)"
+    opencode_skills_dir="${OCW_OPENCODE_SKILLS_DIR:-$opencode_home_dir/skills}"
+    agents_skills_dir="${OCW_AGENTS_SKILLS_DIR:-${AGENTS_HOME:-$HOME/.agents}/skills}"
+
+    uninstall_remove_path "Codex skill" "$codex_skills_dir/$SKILL_NAME" "$yes"
+    uninstall_remove_path "Claude Code skill" "$claude_skills_dir/$SKILL_NAME" "$yes"
+    uninstall_remove_path "OpenCode skill" "$opencode_skills_dir/$SKILL_NAME" "$yes"
+    uninstall_remove_path "Agents skill" "$agents_skills_dir/$SKILL_NAME" "$yes"
+  fi
+
+  if [[ "$remove_project" -eq 1 ]]; then
+    config_template="$(mktemp "${TMPDIR:-/tmp}/ocw-config.XXXXXX")"
+    print_default_config > "$config_template"
+
+    uninstall_remove_file_if_matching "project config" ".ocw.toml" "$config_template" "$force" "$yes"
+    uninstall_remove_file_if_matching "Codex instructions" "AGENTS.md" "$OCW_HOME/examples/codex/AGENTS.md" "$force" "$yes"
+    uninstall_remove_file_if_matching "Claude Code instructions" "CLAUDE.md" "$OCW_HOME/examples/claude/CLAUDE.md" "$force" "$yes"
+    rm -f "$config_template"
+
+    uninstall_remove_path "project OpenCode skill" ".opencode/skills/$SKILL_NAME" "$yes"
+    uninstall_remove_path "project Claude Code skill" ".claude/skills/$SKILL_NAME" "$yes"
+    uninstall_remove_path "project Agents skill" ".agents/skills/$SKILL_NAME" "$yes"
+    uninstall_remove_path "OpenCode agent ocw-explorer" ".opencode/agents/ocw-explorer.md" "$yes"
+    uninstall_remove_path "OpenCode agent ocw-reviewer" ".opencode/agents/ocw-reviewer.md" "$yes"
+    uninstall_remove_path "OpenCode agent ocw-patcher" ".opencode/agents/ocw-patcher.md" "$yes"
+    uninstall_remove_path "OpenCode agent ocw-triage" ".opencode/agents/ocw-triage.md" "$yes"
+    uninstall_remove_gitignore_entries "$yes"
+  fi
+
+  if [[ "$yes" -eq 1 ]]; then
+    printf 'OCW uninstall complete\n'
+  fi
 }
 
 init_project() {
@@ -2330,7 +2579,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+  commands="init uninstall last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -2362,7 +2611,7 @@ EOF
 _ocw() {
   local -a commands modes
   commands=(
-    init last show manifest audit apply clean stats serve doctor models
+    init uninstall last show manifest audit apply clean stats serve doctor models
     agent-pack bench batch pr mcp-config completions mcp version
   )
   modes=(cheap explore scan review patch)
@@ -2391,7 +2640,7 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall last show manifest audit apply clean stats serve doctor models agent-pack bench batch pr mcp-config completions mcp version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
@@ -2446,6 +2695,11 @@ case "$1" in
   init)
     shift
     init_project "$@"
+    exit 0
+    ;;
+  uninstall)
+    shift
+    uninstall_command "$@"
     exit 0
     ;;
   last)

@@ -9,6 +9,7 @@ mkdir -p "$TARGET_DIR"
 ln -sf "$ROOT/bin/ocw" "$TARGET"
 
 printf 'Installed ocw -> %s\n' "$TARGET"
+printf 'Uninstall with: ocw uninstall --yes\n'
 
 case ":$PATH:" in
   *":$TARGET_DIR:"*) ;;

@@ -276,6 +276,63 @@ test_init_project() {
   assert_file ".agents/skills/opencode-worker/SKILL.md"
 }
 
+test_uninstall_command() {
+  local repo="$TMP_ROOT/uninstall"
+  local install_dir="$TMP_ROOT/uninstall-bin"
+  local codex_skills="$TMP_ROOT/uninstall-codex-skills"
+  local claude_skills="$TMP_ROOT/uninstall-claude-skills"
+  local opencode_skills="$TMP_ROOT/uninstall-opencode-skills"
+  local agents_skills="$TMP_ROOT/uninstall-agents-skills"
+  local dry_run output
+  make_repo "$repo"
+  cd "$repo"
+
+  OCW_INSTALL_DIR="$install_dir" "$ROOT/install.sh" >/dev/null
+  assert_file "$install_dir/ocw"
+
+  OCW_CODEX_SKILLS_DIR="$codex_skills" \
+    OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
+    "$OCW" init --project-skills >/dev/null
+  "$OCW" agent-pack install >/dev/null
+
+  dry_run="$TMP_ROOT/uninstall-dry-run.txt"
+  OCW_INSTALL_DIR="$install_dir" \
+    OCW_CODEX_SKILLS_DIR="$codex_skills" \
+    OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
+    "$OCW" uninstall --all --dry-run > "$dry_run"
+  assert_contains "$dry_run" "Would remove binary"
+  assert_file "$install_dir/ocw"
+  assert_file ".ocw.toml"
+
+  output="$TMP_ROOT/uninstall-output.txt"
+  OCW_INSTALL_DIR="$install_dir" \
+    OCW_CODEX_SKILLS_DIR="$codex_skills" \
+    OCW_CLAUDE_SKILLS_DIR="$claude_skills" \
+    OCW_OPENCODE_SKILLS_DIR="$opencode_skills" \
+    OCW_AGENTS_SKILLS_DIR="$agents_skills" \
+    "$OCW" uninstall --all --yes > "$output"
+  assert_contains "$output" "OCW uninstall complete"
+
+  [[ ! -e "$install_dir/ocw" ]] || fail "expected binary uninstall"
+  [[ ! -d "$codex_skills/opencode-worker" ]] || fail "expected Codex skill uninstall"
+  [[ ! -d "$claude_skills/opencode-worker" ]] || fail "expected Claude skill uninstall"
+  [[ ! -d "$opencode_skills/opencode-worker" ]] || fail "expected OpenCode skill uninstall"
+  [[ ! -d "$agents_skills/opencode-worker" ]] || fail "expected Agents skill uninstall"
+  [[ ! -e ".ocw.toml" ]] || fail "expected config uninstall"
+  [[ ! -e "AGENTS.md" ]] || fail "expected AGENTS uninstall"
+  [[ ! -e "CLAUDE.md" ]] || fail "expected CLAUDE uninstall"
+  [[ ! -d ".opencode/skills/opencode-worker" ]] || fail "expected project OpenCode skill uninstall"
+  [[ ! -d ".claude/skills/opencode-worker" ]] || fail "expected project Claude skill uninstall"
+  [[ ! -d ".agents/skills/opencode-worker" ]] || fail "expected project Agents skill uninstall"
+  [[ ! -e ".opencode/agents/ocw-explorer.md" ]] || fail "expected OpenCode agent uninstall"
+  assert_not_contains ".gitignore" ".codex/opencode-workers/"
+  assert_not_contains ".gitignore" ".codex/opencode-worktrees/"
+}
+
 test_last_show_clean() {
   local repo="$TMP_ROOT/artifacts"
   local latest summary clean_list
@@ -587,6 +644,7 @@ run_test "output collision" test_output_collision
 run_test "worktree patch isolation" test_worktree_patch_isolation
 run_test "require clean" test_require_clean
 run_test "init project" test_init_project
+run_test "uninstall command" test_uninstall_command
 run_test "last show clean" test_last_show_clean
 run_test "manifest audit and cli helpers" test_manifest_audit_and_cli_helpers
 run_test "apply worktree patch" test_apply_worktree_patch
