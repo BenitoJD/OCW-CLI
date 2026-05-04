@@ -998,14 +998,18 @@ status_has_unexpected_changes() {
   local status_file="$1"
   local project_dir="$2"
   local output_dir="$3"
+  local before_status_file="${4:-}"
   local output_rel=""
-  local line path
-
-  [[ -s "$status_file" ]] || return 1
+  local line path before_norm after_norm has_changes status_source
 
   if [[ -n "$project_dir" && -n "$output_dir" && "$output_dir" == "$project_dir/"* ]]; then
     output_rel="${output_dir#"$project_dir"/}"
   fi
+
+  after_norm="$(mktemp "${TMPDIR:-/tmp}/ocw-status-after.XXXXXX")"
+  before_norm=""
+  status_source="/dev/null"
+  [[ -f "$status_file" ]] && status_source="$status_file"
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$line" ]] || continue
@@ -1022,10 +1026,44 @@ status_has_unexpected_changes() {
           ;;
       esac
     fi
-    return 0
-  done < "$status_file"
+    printf '%s\n' "$line"
+  done < "$status_source" | LC_ALL=C sort -u > "$after_norm"
 
-  return 1
+  if [[ -n "$before_status_file" && -f "$before_status_file" ]]; then
+    before_norm="$(mktemp "${TMPDIR:-/tmp}/ocw-status-before.XXXXXX")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -n "$line" ]] || continue
+      path="${line:3}"
+      case "$path" in
+        .codex|.codex/|.codex/*|.out|.out/|.out/*)
+          continue
+          ;;
+      esac
+      if [[ -n "$output_rel" ]]; then
+        case "$path" in
+          "$output_rel"|"$output_rel"/|"$output_rel"/*)
+            continue
+            ;;
+        esac
+      fi
+      printf '%s\n' "$line"
+    done < "$before_status_file" | LC_ALL=C sort -u > "$before_norm"
+
+    if cmp -s "$before_norm" "$after_norm"; then
+      has_changes=1
+    else
+      has_changes=0
+    fi
+  elif [[ -s "$after_norm" ]]; then
+    has_changes=0
+  else
+    has_changes=1
+  fi
+
+  rm -f "$after_norm"
+  [[ -n "$before_norm" ]] && rm -f "$before_norm"
+
+  return "$has_changes"
 }
 
 audit_add() {
@@ -1136,7 +1174,9 @@ audit_command() {
         else
           audit_add warn patch_isolation "patch did not run in an isolated worktree"
         fi
-      elif status_has_unexpected_changes "$run_dir/status.after.txt" "$project_dir" "$output_dir"; then
+      elif {
+        [[ -f "$run_dir/diff.before.patch" && -f "$run_dir/diff.after.patch" ]] && ! cmp -s "$run_dir/diff.before.patch" "$run_dir/diff.after.patch"
+      } || status_has_unexpected_changes "$run_dir/status.after.txt" "$project_dir" "$output_dir" "$run_dir/status.before.txt"; then
         audit_add warn readonly_changes "read-only mode left unexpected git status changes"
       else
         audit_add ok readonly_changes "no unexpected git status changes"
@@ -2633,6 +2673,7 @@ if [[ "$use_worktree" -eq 1 ]]; then
   run_dir="$worktree_path"
 fi
 
+write_status_snapshot "$run_dir" "$out_dir/status.before.txt"
 write_diff_snapshot "$run_dir" "$out_dir/diff.before.patch"
 
 prompt="$guardrail

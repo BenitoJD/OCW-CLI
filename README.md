@@ -287,6 +287,7 @@ result.jsonl
 diff.before.patch
 diff.after.patch
 diff.after.stat
+status.before.txt
 status.after.txt
 metadata.txt
 ```
@@ -297,7 +298,7 @@ Use `ocw show latest` instead of manually searching output directories.
 
 Use `ocw manifest latest --json` when another tool needs a stable inventory of run metadata, artifact paths, file sizes, and SHA-256 checksums.
 
-Use `ocw audit latest` as a local quality gate before trusting worker output. It checks for failed workers, missing artifacts, unexpected read-only changes, non-isolated patch drafts, large diffs, and obvious prompt-injection markers in worker summaries. `ocw audit --json` returns machine-readable output and exits non-zero when a run fails hard checks.
+Use `ocw audit latest` as a local quality gate before trusting worker output. It checks for failed workers, missing artifacts, unexpected read-only changes compared with the pre-run status, non-isolated patch drafts, large diffs, and obvious prompt-injection markers in worker summaries. `ocw audit --json` returns machine-readable output and exits non-zero when a run fails hard checks.
 
 Benchmarks write:
 

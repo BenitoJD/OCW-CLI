@@ -183,6 +183,7 @@ test_diff_capture() {
   OCW_TEST_STAMP="diff" run_ocw patch "OCW_MOCK_EDIT" >/dev/null
 
   assert_contains ".out/diff-patch/diff.after.patch" "mock edit from opencode-go/kimi-k2.6"
+  assert_file ".out/diff-patch/status.before.txt"
   assert_contains ".out/diff-patch/status.after.txt" "M tracked.txt"
 }
 
@@ -328,6 +329,29 @@ test_manifest_audit_and_cli_helpers() {
   OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
   assert_contains "$audit_output" "overall: ok"
   assert_contains "$audit_output" "summary.md is present"
+
+  printf 'pre-existing\n' > local-note.txt
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_OUTPUT_ROOT=".out" \
+    OCW_MOCK_LOG="$PWD/.out/mock.log" \
+    OCW_TEST_CREATED_AT="2026-01-01T00:00:00Z" \
+    OCW_TEST_STAMP="audit-preexisting-dirty" \
+    "$OCW" cheap "audit preexisting dirty" >/dev/null
+
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
+  assert_contains "$audit_output" "overall: ok"
+  assert_contains "$audit_output" "no unexpected git status changes"
+
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" \
+    OCW_OUTPUT_ROOT=".out" \
+    OCW_MOCK_LOG="$PWD/.out/mock.log" \
+    OCW_TEST_CREATED_AT="2026-01-01T00:00:00Z" \
+    OCW_TEST_STAMP="audit-readonly-change" \
+    "$OCW" cheap "OCW_MOCK_EDIT" >/dev/null
+
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
+  assert_contains "$audit_output" "overall: warn"
+  assert_contains "$audit_output" "read-only mode left unexpected git status changes"
 
   completion="$TMP_ROOT/completion.txt"
   "$OCW" completions bash > "$completion"
