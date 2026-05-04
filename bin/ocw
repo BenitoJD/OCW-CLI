@@ -656,7 +656,8 @@ models_list_from_cache() {
 }
 
 models_cached_csv() {
-  local cache="${1:-$(models_cache_path)}"
+  local cache
+  cache="$(models_cache_path)"
   models_list_from_cache "$cache" | awk 'BEGIN { first = 1 } { if (!first) printf ","; printf "%s", $0; first = 0 } END { printf "\n" }'
 }
 
