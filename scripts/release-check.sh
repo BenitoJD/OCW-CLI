@@ -11,5 +11,6 @@ grep -Fq "## $VERSION" "$ROOT/CHANGELOG.md" || {
 
 "$ROOT/scripts/lint.sh"
 "$ROOT/scripts/package.sh"
+OCW_GAUNTLET_SKIP_PACKAGE=1 "$ROOT/scripts/gauntlet.sh"
 
 printf 'Release check passed for %s\n' "$VERSION"

@@ -13,6 +13,7 @@ files=(
   "$ROOT/scripts/install-skills.sh"
   "$ROOT/scripts/package.sh"
   "$ROOT/scripts/release-check.sh"
+  "$ROOT/scripts/gauntlet.sh"
 )
 
 js_files=(
@@ -38,6 +39,12 @@ if [[ "${OCW_SKIP_SHELLCHECK:-0}" != "1" ]]; then
   else
     printf 'shellcheck not found; skipping shellcheck\n' >&2
   fi
+fi
+
+if command -v actionlint >/dev/null 2>&1; then
+  actionlint "$ROOT/.github/workflows/"*.yml
+else
+  printf 'actionlint not found; skipping workflow lint\n' >&2
 fi
 
 "$ROOT/test/run.sh"

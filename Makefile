@@ -1,4 +1,4 @@
-.PHONY: test lint package release-check install doctor models
+.PHONY: test lint package gauntlet release-check install doctor models
 
 test:
 	./test/run.sh
@@ -8,6 +8,9 @@ lint:
 
 package:
 	./scripts/package.sh
+
+gauntlet:
+	./scripts/gauntlet.sh
 
 release-check:
 	./scripts/release-check.sh
