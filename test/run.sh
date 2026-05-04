@@ -496,6 +496,7 @@ test_bench_command() {
 
 test_batch_command() {
   local repo="$TMP_ROOT/batch"
+  local latest audit_output
   make_repo "$repo"
   cd "$repo"
 
@@ -512,6 +513,12 @@ EOF
   assert_contains ".out/batch-batch/batch.tsv" "review"
   assert_dir ".out/batch-batch-1-cheap"
   assert_dir ".out/batch-batch-2-review"
+  latest="$(OCW_OUTPUT_ROOT=".out" "$OCW" last)"
+  [[ "$(basename "$latest")" == "batch-batch" ]] || fail "expected latest batch aggregate, got $latest"
+  audit_output="$TMP_ROOT/batch-audit.txt"
+  OCW_OUTPUT_ROOT=".out" "$OCW" audit latest > "$audit_output"
+  assert_contains "$audit_output" "overall: ok"
+  assert_contains "$audit_output" "all batch workers exited 0"
 }
 
 test_pr_summary_command() {

@@ -91,8 +91,9 @@ Output:
     diff.before.patch
     diff.after.patch
     diff.after.stat
+    status.before.txt
     status.after.txt
-  metadata.txt
+    metadata.txt
 
 Audit:
   ocw manifest latest --json
@@ -445,17 +446,46 @@ file_sha256() {
   fi
 }
 
+is_batch_worker_run() {
+  local root="$1"
+  local dir="$2"
+  local base prefix mode
+
+  base="$(basename "$dir")"
+  case "$base" in
+    *-batch-[0-9]*-cheap|*-batch-[0-9]*-explore|*-batch-[0-9]*-scan|*-batch-[0-9]*-review|*-batch-[0-9]*-patch)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  mode="${base##*-}"
+  prefix="${base%-[0-9]*-"$mode"}"
+  [[ -d "$root/$prefix" && "$(metadata_value "$root/$prefix/metadata.txt" "mode")" == "batch" ]]
+}
+
 latest_run_dir() {
   local root="$1"
   local mode="${2:-}"
   local latest
+  local candidate
 
   [[ -d "$root" ]] || die "output root not found: $root"
 
+  latest=""
   if [[ -n "$mode" ]]; then
     latest="$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "*-$mode*" -print | sort | tail -n 1)"
   else
-    latest="$(find "$root" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -n 1)"
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+      [[ -n "$candidate" ]] || continue
+      if is_batch_worker_run "$root" "$candidate"; then
+        continue
+      fi
+      latest="$candidate"
+    done <<EOF
+$(find "$root" -mindepth 1 -maxdepth 1 -type d -print | sort)
+EOF
   fi
 
   [[ -n "$latest" ]] || die "no OCW runs found in $root"
@@ -1085,6 +1115,19 @@ audit_tsv_marker_warnings() {
   awk -F '\t' -v col="$column" 'NR > 1 && $col != "ok" { found = 1 } END { exit(found ? 0 : 1) }' "$file"
 }
 
+audit_summary_has_injection_marker() {
+  local run_dir="$1"
+  local file
+
+  while IFS= read -r -d '' file; do
+    if grep -Eiq 'ignore (all )?(previous|prior) instructions|system prompt|developer message|exfiltrat|api[_ -]?key|secret token' "$file"; then
+      return 0
+    fi
+  done < <(find "$run_dir" \( -name summary.md -o -name review.md \) -type f -print0 2>/dev/null)
+
+  return 1
+}
+
 audit_command() {
   local root="$1"
   shift
@@ -1253,8 +1296,7 @@ audit_command() {
     fi
   fi
 
-  if find "$run_dir" \( -name summary.md -o -name review.md \) -type f -print0 2>/dev/null \
-    | xargs -0 grep -Eiq 'ignore (all )?(previous|prior) instructions|system prompt|developer message|exfiltrat|api[_ -]?key|secret token' 2>/dev/null; then
+  if audit_summary_has_injection_marker "$run_dir"; then
     audit_add warn injection_markers "worker summaries contain prompt-injection or secret-handling markers"
   else
     audit_add ok injection_markers "no obvious prompt-injection markers in worker summaries"
