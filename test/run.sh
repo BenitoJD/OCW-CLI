@@ -784,7 +784,7 @@ EOF
 
 test_hardening_security_and_ux() {
   local repo="$TMP_ROOT/hardening"
-  local status bad_json err_json fake_curl curl_log missing_node broken_gh quick_json setup_json explain_json
+  local status fake_curl curl_log missing_node broken_gh quick_json setup_json explain_json
   local codex_skills="$TMP_ROOT/hardening-codex-skills"
   make_repo "$repo"
   cd "$repo"
