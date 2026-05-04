@@ -504,7 +504,7 @@ Codex `config.toml`:
 command = "ocw"
 args = ["mcp"]
 startup_timeout_sec = 10
-tool_timeout_sec = 300
+tool_timeout_sec = 900
 ```
 
 Claude Code:
