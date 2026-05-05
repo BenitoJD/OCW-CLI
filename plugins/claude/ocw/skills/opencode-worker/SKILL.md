@@ -17,6 +17,9 @@ Use this skill when a coding agent should spend less premium model time by deleg
 ## Mode Selection
 
 ```bash
+ocw delegate "Find the relevant files for this task"
+ocw verdict latest
+ocw savings
 ocw cheap "Summarize this small config flow"
 ocw explore "Find where auth errors are handled"
 ocw scan "Map the billing flow across the repo"
@@ -26,6 +29,7 @@ ocw --worktree patch "Draft the smallest safe validation fix"
 
 Prefer read-only modes first:
 
+- `delegate`: auto-route a bounded task and record a final-review handoff
 - `cheap`: routine summaries and low-risk sanity checks
 - `explore`: normal codebase exploration
 - `scan`: broad or long-context mapping
@@ -128,10 +132,14 @@ ocw_route
 ocw_tournament
 ocw_memory
 ocw_dashboard
+ocw_delegate
+ocw_verdict
+ocw_savings
+ocw_backend
 ocw_mcp_audit
 ```
 
-Use `ocw_run` for worker delegation, `ocw_show` for saved artifacts, `ocw_manifest` for artifact inventory and checksums, `ocw_audit` before trusting worker output, `ocw_apply_check` before `ocw_apply`, and `ocw_stats` for OpenCode usage statistics.
+Use `ocw_delegate` or `ocw_run` for worker delegation, `ocw_verdict` for the final-review gate, `ocw_show` for saved artifacts, `ocw_manifest` for artifact inventory and checksums, `ocw_audit` before trusting worker output, `ocw_apply_check` before `ocw_apply`, and `ocw_stats`/`ocw_savings` for usage statistics.
 
 The server is started with:
 

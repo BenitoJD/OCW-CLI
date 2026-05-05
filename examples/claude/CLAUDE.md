@@ -5,6 +5,9 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 ## Modes
 
 - `ocw cheap "<task>"` for cheap routine analysis.
+- `ocw delegate "<task>"` to auto-route a bounded worker task.
+- `ocw verdict latest` after a delegated run to keep final review explicit.
+- `ocw savings` to summarize worker usage and estimated frontier work avoided.
 - `ocw explore "<task>"` for normal repo exploration.
 - `ocw scan "<task>"` for broad or long-context scans.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.
@@ -22,12 +25,13 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 ## Workflow
 
 1. Run the narrowest useful `ocw` mode.
-2. Read `.codex/opencode-workers/*/summary.md`.
-3. Run `ocw audit latest`.
-4. If files changed, inspect `diff.after.patch` and `status.after.txt`.
-5. Decide what to keep.
-6. Run tests yourself.
-7. Report the final result clearly.
+2. Prefer `ocw delegate` when the best worker mode is not obvious.
+3. Read `.codex/opencode-workers/*/summary.md`.
+4. Run `ocw audit latest` and `ocw verdict latest`.
+5. If files changed, inspect `diff.after.patch` and `status.after.txt`.
+6. Decide what to keep.
+7. Run tests yourself.
+8. Report the final result clearly.
 
 ## Rules
 

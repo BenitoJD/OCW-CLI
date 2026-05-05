@@ -6,8 +6,7 @@ Use Codex as the orchestrator and OCW as the cheap worker layer.
 
 ```bash
 ocw doctor --deep
-ocw agents sync
-ocw mcp-config codex
+ocw setup all
 ocw bridge doctor
 ```
 
@@ -31,12 +30,16 @@ tool_timeout_sec = 900
 ## Daily flow
 
 ```text
-Use OCW to explore the auth flow cheaply. Read the artifact, then inspect the relevant files yourself before editing.
+Use ocw delegate to explore the auth flow cheaply. Read the artifact, run ocw verdict latest, then inspect the relevant files yourself before editing.
 ```
 
 Useful commands:
 
 ```bash
+ocw delegate "Map the auth flow"
+ocw verdict latest
+ocw savings
+ocw backend doctor
 ocw explore "Map the auth flow"
 ocw review "Review the current diff for regressions"
 ocw --worktree patch "Draft the smallest safe fix"

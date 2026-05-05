@@ -43,6 +43,10 @@ Usage:
   ocw audit [latest|run-dir] [--json] [--max-diff-bytes N]
   ocw apply [latest|run-dir] [--check] [--allow-dirty] [--force]
   ocw clean (--days N|--all) [--dry-run] [--yes]
+  ocw delegate [--mode MODE] [--json] [worker-options...] <task...>
+  ocw verdict [latest|run-dir] [--json]
+  ocw savings [--json] [--days N] [--frontier-cost-per-unit N] [--worker-cost-per-unit N]
+  ocw backend list|add|remove|doctor|path [options]
   ocw stats [opencode-stats-options...]
   ocw serve [opencode-serve-options...]
   ocw doctor [--deep] [--json] [--fix]
@@ -141,7 +145,7 @@ EOF
 }
 
 known_commands() {
-  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean delegate verdict savings backend stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 }
 
 suggest_command_name() {
@@ -213,7 +217,7 @@ help_command() {
     version)
       printf 'Usage: ocw version\n'
       ;;
-    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|quickstart|setup|bridge|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|explain|mcp-config|completions|mcp)
+    init|uninstall|config|last|show|manifest|audit|apply|clean|delegate|verdict|savings|backend|stats|serve|doctor|quickstart|setup|bridge|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|explain|mcp-config|completions|mcp)
       "$OCW_SELF" "$topic" --help
       ;;
     *)
@@ -2430,6 +2434,646 @@ apply_command() {
   "$GIT_BIN" -C "$PWD" diff --stat || true
 }
 
+delegate_infer_mode() {
+  local task="$1"
+  local lower
+
+  lower="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    *patch*|*fix*|*implement*|*wire*|*edit*|*change*|*refactor*)
+      printf 'patch\timplementation task should run in an isolated patch worker\n'
+      ;;
+    *review*|*regression*|*risk*|*security*|*bugfix*|*bug\ fix*|*bug\ report*|*pr\ review*|*pull\ request*)
+      printf 'review\treview/risk language benefits from a stronger second-opinion worker\n'
+      ;;
+    *scan*|*whole\ repo*|*entire\ repo*|*monorepo*|*all\ files*)
+      printf 'scan\tbroad repository language benefits from a long-context scan worker\n'
+      ;;
+    *find*|*where*|*map*|*trace*|*understand*|*explore*|*explain*)
+      printf 'explore\trepository discovery language maps to explore mode\n'
+      ;;
+    *)
+      printf 'cheap\tdefaulting to the cheapest bounded worker mode\n'
+      ;;
+  esac
+}
+
+delegate_write_artifact() {
+  local out_dir="$1"
+  local mode="$2"
+  local reason="$3"
+  local final_review="$4"
+  local task="$5"
+  local metadata="$out_dir/metadata.txt"
+
+  [[ -d "$out_dir" ]] || return 0
+  {
+    printf '# OCW delegate\n\n'
+    printf -- "- worker_mode: \`%s\`\n" "$mode"
+    printf -- "- route_reason: %s\n" "$reason"
+    printf -- "- final_review_required: \`%s\`\n\n" "$final_review"
+    printf '## Task\n\n%s\n\n' "$task"
+    printf '## Required Handoff\n\n'
+    printf 'Treat this worker output as draft labor. The primary Codex or Claude Code session remains responsible for final review, edits, and tests.\n'
+  } > "$out_dir/delegate.md"
+
+  if [[ -f "$metadata" ]] && ! grep -Fq 'delegate=1' "$metadata"; then
+    {
+      printf 'delegate=1\n'
+      printf 'delegate_reason=%s\n' "$reason"
+      printf 'final_review_required=%s\n' "$final_review"
+    } >> "$metadata"
+  fi
+}
+
+delegate_command() {
+  local root="$1"
+  shift
+  local mode="" mode_set=0 json=0 final_review=1 use_worktree=0 worktree_set=0
+  local model="" agent="" variant="" attach_url="" auto_approve=0 require_clean=0 remove_worktree=0
+  local task route reason stdout_file stderr_file status output_dir first_arg
+  local -a files=() ocw_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode|--intent)
+        [[ $# -ge 2 ]] || die "$1 requires a value"
+        mode="$2"
+        validate_worker_mode "$mode"
+        mode_set=1
+        shift 2
+        ;;
+      --json) json=1; shift ;;
+      --final-review|--codex-final-review) final_review=1; shift ;;
+      --no-final-review) final_review=0; shift ;;
+      -m|--model)
+        [[ $# -ge 2 ]] || die "--model requires a value"
+        model="$2"
+        shift 2
+        ;;
+      -a|--agent)
+        [[ $# -ge 2 ]] || die "--agent requires a value"
+        agent="$2"
+        shift 2
+        ;;
+      --variant)
+        [[ $# -ge 2 ]] || die "--variant requires a value"
+        variant="$2"
+        shift 2
+        ;;
+      --attach)
+        [[ $# -ge 2 ]] || die "--attach requires a value"
+        attach_url="$2"
+        shift 2
+        ;;
+      --file)
+        [[ $# -ge 2 ]] || die "--file requires a value"
+        files+=("$2")
+        shift 2
+        ;;
+      --auto-approve) auto_approve=1; shift ;;
+      --require-clean) require_clean=1; shift ;;
+      --worktree) use_worktree=1; worktree_set=1; shift ;;
+      --no-worktree) use_worktree=0; worktree_set=1; shift ;;
+      --rm-worktree) remove_worktree=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw delegate [--mode MODE] [--json] [worker-options...] <task...>
+
+Routes a bounded task to the cheapest appropriate OCW worker mode, records a
+delegate handoff artifact, and keeps final review assigned to Codex/Claude.
+
+Modes: cheap, explore, scan, review, patch
+EOF
+        return
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        die "unknown delegate option: $1"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  [[ $# -gt 0 ]] || die "missing delegate task"
+  task="$*"
+
+  if [[ "$mode_set" -eq 0 ]]; then
+    IFS=$'\t' read -r mode reason <<< "$(delegate_infer_mode "$task")"
+  else
+    reason="explicit --mode"
+  fi
+
+  if [[ "$mode" == "patch" && "$worktree_set" -eq 0 ]]; then
+    use_worktree=1
+  fi
+
+  ocw_args=()
+  [[ -n "$model" ]] && ocw_args+=(--model "$model")
+  [[ -n "$agent" ]] && ocw_args+=(--agent "$agent")
+  [[ -n "$variant" ]] && ocw_args+=(--variant "$variant")
+  [[ -n "$attach_url" ]] && ocw_args+=(--attach "$attach_url")
+  if [[ "${#files[@]}" -gt 0 ]]; then
+    for first_arg in "${files[@]}"; do
+      ocw_args+=(--file "$first_arg")
+    done
+  fi
+  [[ "$auto_approve" -eq 1 ]] && ocw_args+=(--auto-approve)
+  [[ "$require_clean" -eq 1 ]] && ocw_args+=(--require-clean)
+  [[ "$use_worktree" -eq 1 ]] && ocw_args+=(--worktree)
+  [[ "$remove_worktree" -eq 1 ]] && ocw_args+=(--rm-worktree)
+  ocw_args+=("$mode" "$task")
+
+  stdout_file="$(mktemp "${TMPDIR:-/tmp}/ocw-delegate-stdout.XXXXXX")"
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/ocw-delegate-stderr.XXXXXX")"
+
+  set +e
+  OCW_OUTPUT_ROOT="$root" "$OCW_SELF" "${ocw_args[@]}" > "$stdout_file" 2> "$stderr_file"
+  status=$?
+  set -e
+
+  output_dir="$(awk '/^OCW output: / { sub(/^OCW output: /, ""); print }' "$stdout_file" | tail -n 1)"
+  if [[ -n "$output_dir" ]]; then
+    delegate_write_artifact "$output_dir" "$mode" "$reason" "$final_review" "$task"
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.delegate.v1",\n'
+    printf '  "mode": '
+    json_string "$mode"
+    printf ',\n  "reason": '
+    json_string "$reason"
+    printf ',\n  "status": %s,\n  "final_review_required": %s,\n  "output_dir": ' "$status" "$([[ "$final_review" -eq 1 ]] && printf true || printf false)"
+    json_string "$output_dir"
+    printf ',\n  "stdout": '
+    json_string "$(cat "$stdout_file")"
+    printf ',\n  "stderr": '
+    json_string "$(cat "$stderr_file")"
+    printf '\n}\n'
+  else
+    cat "$stdout_file"
+    if [[ -s "$stderr_file" ]]; then
+      cat "$stderr_file" >&2
+    fi
+    printf 'OCW delegate: mode=%s reason=%s final_review_required=%s\n' "$mode" "$reason" "$final_review"
+    [[ -n "$output_dir" ]] && printf 'OCW delegate output: %s\n' "$output_dir"
+  fi
+
+  rm -f "$stdout_file" "$stderr_file"
+  return "$status"
+}
+
+mode_savings_weight() {
+  case "$1" in
+    cheap) printf '1\n' ;;
+    explore|review|pr-summary) printf '2\n' ;;
+    scan|patch) printf '3\n' ;;
+    pr-review) printf '4\n' ;;
+    batch|bench|eval|tournament) printf '5\n' ;;
+    *) printf '1\n' ;;
+  esac
+}
+
+cutoff_iso_days() {
+  local days="$1"
+  local cutoff=""
+
+  if [[ "$days" =~ ^[0-9]+$ && "$days" -gt 0 ]]; then
+    cutoff="$(date -u -v-"$days"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+    if [[ -z "$cutoff" ]]; then
+      cutoff="$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+    fi
+  fi
+  printf '%s\n' "$cutoff"
+}
+
+savings_command() {
+  local root="$1"
+  shift
+  local json=0 days=0 frontier_cost="${OCW_FRONTIER_COST_PER_UNIT:-0.40}" worker_cost="${OCW_WORKER_COST_PER_UNIT:-0.03}"
+  local root_abs cutoff dir metadata mode status created_at weight
+  local runs=0 ok=0 failed=0 delegated=0 frontier_units=0 worker_units=0 estimate
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --days)
+        [[ $# -ge 2 ]] || die "--days requires a value"
+        days="$2"
+        shift 2
+        ;;
+      --frontier-cost-per-unit)
+        [[ $# -ge 2 ]] || die "--frontier-cost-per-unit requires a value"
+        frontier_cost="$2"
+        shift 2
+        ;;
+      --worker-cost-per-unit)
+        [[ $# -ge 2 ]] || die "--worker-cost-per-unit requires a value"
+        worker_cost="$2"
+        shift 2
+        ;;
+      -h|--help)
+        printf 'Usage: ocw savings [--json] [--days N] [--frontier-cost-per-unit N] [--worker-cost-per-unit N]\n'
+        return
+        ;;
+      *)
+        die "unknown savings option: $1"
+        ;;
+    esac
+  done
+
+  [[ "$days" =~ ^[0-9]+$ ]] || die "--days must be a non-negative integer"
+  root_abs="$(prepare_output_root "$root")"
+  cutoff="$(cutoff_iso_days "$days")"
+
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    metadata="$dir/metadata.txt"
+    [[ -f "$metadata" ]] || continue
+    created_at="$(metadata_value "$metadata" "created_at")"
+    if [[ -n "$cutoff" && -n "$created_at" && "$created_at" < "$cutoff" ]]; then
+      continue
+    fi
+    mode="$(metadata_value "$metadata" "mode")"
+    status="$(metadata_value "$metadata" "status")"
+    weight="$(mode_savings_weight "$mode")"
+    runs=$((runs + 1))
+    frontier_units=$((frontier_units + weight))
+    worker_units=$((worker_units + 1))
+    if [[ "$status" == "0" ]]; then
+      ok=$((ok + 1))
+    else
+      failed=$((failed + 1))
+    fi
+    if [[ "$(metadata_value "$metadata" "delegate")" == "1" ]]; then
+      delegated=$((delegated + 1))
+    fi
+  done <<EOF
+$(find "$root_abs" -mindepth 1 -maxdepth 1 -type d -print | sort)
+EOF
+
+  estimate="$(awk -v units="$frontier_units" -v workers="$worker_units" -v frontier="$frontier_cost" -v worker="$worker_cost" 'BEGIN { printf "%.4f", (units * frontier) - (workers * worker) }')"
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.savings.v1",\n'
+    printf '  "output_root": '
+    json_string "$root_abs"
+    printf ',\n  "days": %s,\n  "runs": %s,\n  "successful_runs": %s,\n  "failed_runs": %s,\n  "delegated_runs": %s,\n' "$days" "$runs" "$ok" "$failed" "$delegated"
+    printf '  "frontier_equivalent_units": %s,\n  "worker_units": %s,\n' "$frontier_units" "$worker_units"
+    printf '  "frontier_cost_per_unit": %s,\n  "worker_cost_per_unit": %s,\n  "estimated_savings": %s\n' "$frontier_cost" "$worker_cost" "$estimate"
+    printf '}\n'
+    return
+  fi
+
+  printf 'OCW savings estimate\n'
+  printf 'output_root: %s\n' "$root_abs"
+  printf 'runs: %s (%s ok, %s failed, %s delegated)\n' "$runs" "$ok" "$failed" "$delegated"
+  printf 'frontier_equivalent_units: %s\n' "$frontier_units"
+  printf 'worker_units: %s\n' "$worker_units"
+  printf 'estimated_savings: %s\n' "$estimate"
+  printf 'note: cost units are configurable estimates, not provider billing records\n'
+}
+
+verdict_command() {
+  local root="$1"
+  shift
+  local ref="latest" json=0 root_abs run_dir metadata mode status worktree diff_bytes audit_json audit_status audit_overall
+  local overall="pass" safe_to_apply=false needs_final_review=true reason="worker output requires primary-agent review"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw verdict [latest|run-dir] [--json]\n'
+        return
+        ;;
+      -*)
+        die "unknown verdict option: $1"
+        ;;
+      *)
+        ref="$1"
+        shift
+        ;;
+    esac
+  done
+
+  root_abs="$(abs_existing_dir "$root")"
+  run_dir="$(resolve_run_dir "$root_abs" "$ref")"
+  metadata="$run_dir/metadata.txt"
+  mode="$(metadata_value "$metadata" "mode")"
+  status="$(metadata_value "$metadata" "status")"
+  worktree="$(metadata_value "$metadata" "worktree")"
+  diff_bytes=0
+  [[ -f "$run_dir/diff.after.patch" ]] && diff_bytes="$(file_size_bytes "$run_dir/diff.after.patch")"
+
+  set +e
+  audit_json="$(audit_command "$root_abs" "$run_dir" --json)"
+  audit_status=$?
+  set -e
+  audit_overall="$(printf '%s\n' "$audit_json" | awk -F'"' '/"overall":/ { print $4; exit }')"
+
+  if [[ "$status" != "0" || "$audit_status" -ne 0 || "$audit_overall" == "fail" ]]; then
+    overall="fail"
+    reason="worker failed or audit found blocking issues"
+  elif [[ "$audit_overall" == "warn" ]]; then
+    overall="warn"
+    reason="worker completed but audit warnings need review"
+  fi
+
+  if [[ "$mode" == "patch" && "$status" == "0" && "$audit_overall" == "ok" && "$worktree" == "1" && "$diff_bytes" -gt 0 ]]; then
+    safe_to_apply=true
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.verdict.v1",\n'
+    printf '  "run_dir": '
+    json_string "$run_dir"
+    printf ',\n  "overall": '
+    json_string "$overall"
+    printf ',\n  "mode": '
+    json_string "$mode"
+    printf ',\n  "status": '
+    json_string "$status"
+    printf ',\n  "audit_overall": '
+    json_string "$audit_overall"
+    printf ',\n  "diff_bytes": %s,\n  "needs_final_review": %s,\n  "safe_to_apply_after_review": %s,\n  "reason": ' "$diff_bytes" "$needs_final_review" "$safe_to_apply"
+    json_string "$reason"
+    printf '\n}\n'
+    [[ "$overall" != "fail" ]]
+    return
+  fi
+
+  printf 'OCW verdict: %s\n' "$overall"
+  printf 'run: %s\n' "$run_dir"
+  printf 'mode: %s\n' "${mode:-unknown}"
+  printf 'status: %s\n' "${status:-unknown}"
+  printf 'audit: %s\n' "${audit_overall:-unknown}"
+  printf 'needs_final_review: %s\n' "$needs_final_review"
+  printf 'safe_to_apply_after_review: %s\n' "$safe_to_apply"
+  printf 'reason: %s\n' "$reason"
+  [[ "$overall" != "fail" ]]
+}
+
+backend_registry_path() {
+  printf '%s\n' "${OCW_BACKENDS_FILE:-$(ocw_state_dir)/ocw-backends.tsv}"
+}
+
+backend_builtin_rows() {
+  cat <<'EOF'
+opencode-go	provider	opencode	https://opencode.ai	OpenCode Go provider through OpenCode CLI
+opencode-local	agent	opencode	https://opencode.ai	Local OpenCode models or configured providers
+aider	agent	aider	https://aider.chat	Aider CLI adapter candidate
+openhands	agent	openhands	https://docs.all-hands.dev	OpenHands agent runtime candidate
+swe-agent	agent	sweagent	https://swe-agent.com	SWE-agent runtime candidate
+goose	agent	goose	https://block.github.io/goose	Goose local agent candidate
+ollama	provider	ollama	https://ollama.com	Local Ollama model provider candidate
+litellm	gateway	litellm	https://docs.litellm.ai	LiteLLM proxy/gateway candidate
+openrouter	gateway	curl	https://openrouter.ai	OpenRouter API gateway candidate
+bifrost	gateway	bifrost	https://docs.getbifrost.ai	Bifrost AI gateway candidate
+EOF
+}
+
+backend_command_available() {
+  local command_name="$1"
+  if [[ "$command_name" == "opencode" ]]; then
+    have_command "$OPENCODE_BIN"
+  else
+    have_command "$command_name"
+  fi
+}
+
+backend_custom_rows() {
+  local file="${1:-$(backend_registry_path)}"
+  [[ -f "$file" ]] || return 0
+  awk -F '\t' 'BEGIN { OFS = "\t" } NR > 1 { print $2, $3, $4, $5, $6 }' "$file"
+}
+
+backend_row_for() {
+  local name="$1"
+  local custom
+  custom="$(backend_custom_rows | awk -F '\t' -v name="$name" '$1 == name { print }' | tail -n 1)"
+  if [[ -n "$custom" ]]; then
+    printf '%s\n' "$custom"
+    return
+  fi
+  backend_builtin_rows | awk -F '\t' -v name="$name" '$1 == name { print }'
+}
+
+backend_list_json() {
+  local first=1 name kind command url note available
+  printf '{\n'
+  printf '  "schema_version": "ocw.backend.v1",\n'
+  printf '  "registry": '
+  json_string "$(backend_registry_path)"
+  printf ',\n  "backends": [\n'
+  while IFS=$'\t' read -r name kind command url note; do
+    [[ -n "$name" ]] || continue
+    if backend_command_available "$command"; then available=true; else available=false; fi
+    if [[ "$first" -eq 0 ]]; then
+      printf ',\n'
+    fi
+    printf '    { "name": '
+    json_string "$name"
+    printf ', "kind": '
+    json_string "$kind"
+    printf ', "command": '
+    json_string "$command"
+    printf ', "url": '
+    json_string "$url"
+    printf ', "available": %s, "note": ' "$available"
+    json_string "$note"
+    printf ' }'
+    first=0
+  done <<EOF
+$(backend_builtin_rows)
+$(backend_custom_rows)
+EOF
+  printf '\n  ]\n}\n'
+}
+
+backend_command() {
+  local subcommand="${1:-list}"
+  shift || true
+  local json=0 force=0 name="" kind="" command_name="" url="" note="" registry
+  local row available status=0 first=1 created_at
+
+  registry="$(backend_registry_path)"
+
+  case "$subcommand" in
+    list|doctor|path|add|remove) ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw backend list [--json]
+  ocw backend doctor [--json]
+  ocw backend add NAME [--kind KIND] [--command CMD] [--url URL] [--note TEXT] [--force]
+  ocw backend remove NAME
+  ocw backend path
+EOF
+      return
+      ;;
+    *) die "unknown backend command: $subcommand" ;;
+  esac
+
+  if [[ "$subcommand" == "path" ]]; then
+    printf '%s\n' "$registry"
+    return
+  fi
+
+  if [[ "$subcommand" == "add" ]]; then
+    [[ $# -ge 1 ]] || die "Usage: ocw backend add NAME [--kind KIND] [--command CMD] [--url URL] [--note TEXT] [--force]"
+    name="$1"
+    shift
+    row="$(backend_row_for "$name")"
+    if [[ -n "$row" ]]; then
+      IFS=$'\t' read -r name kind command_name url note <<< "$row"
+    fi
+    kind="${kind:-agent}"
+    command_name="${command_name:-$name}"
+    url="${url:-}"
+    note="${note:-custom backend}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --kind)
+          [[ $# -ge 2 ]] || die "--kind requires a value"
+          kind="$2"
+          shift 2
+          ;;
+        --command)
+          [[ $# -ge 2 ]] || die "--command requires a value"
+          command_name="$2"
+          shift 2
+          ;;
+        --url)
+          [[ $# -ge 2 ]] || die "--url requires a value"
+          url="$2"
+          shift 2
+          ;;
+        --note)
+          [[ $# -ge 2 ]] || die "--note requires a value"
+          note="$2"
+          shift 2
+          ;;
+        --force) force=1; shift ;;
+        --json) json=1; shift ;;
+        *) die "unknown backend add option: $1" ;;
+      esac
+    done
+    ensure_parent_dir "$registry"
+    if [[ ! -f "$registry" ]]; then
+      printf 'created_at\tname\tkind\tcommand\turl\tnote\n' > "$registry"
+    fi
+    if [[ "$force" -eq 1 ]]; then
+      awk -F '\t' -v name="$name" 'NR == 1 || $2 != name { print }' "$registry" > "$registry.tmp"
+      mv "$registry.tmp" "$registry"
+    elif awk -F '\t' -v name="$name" 'NR > 1 && $2 == name { found = 1 } END { exit(found ? 0 : 1) }' "$registry"; then
+      die "backend already exists: $name (pass --force to replace)"
+    fi
+    created_at="$(now_utc)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$created_at" "$name" "$kind" "$command_name" "$url" "$note" >> "$registry"
+    if [[ "$json" -eq 1 ]]; then
+      printf '{ "schema_version": "ocw.backend.add.v1", "name": '
+      json_string "$name"
+      printf ', "registry": '
+      json_string "$registry"
+      printf ' }\n'
+    else
+      printf 'OCW backend added: %s\n' "$name"
+      printf 'registry: %s\n' "$registry"
+    fi
+    return
+  fi
+
+  if [[ "$subcommand" == "remove" ]]; then
+    [[ $# -eq 1 ]] || die "Usage: ocw backend remove NAME"
+    name="$1"
+    [[ -f "$registry" ]] || die "backend registry not found: $registry"
+    awk -F '\t' -v name="$name" 'NR == 1 || $2 != name { print }' "$registry" > "$registry.tmp"
+    mv "$registry.tmp" "$registry"
+    printf 'OCW backend removed: %s\n' "$name"
+    return
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw backend %s [--json]\n' "$subcommand"
+        return
+        ;;
+      *) die "unknown backend option: $1" ;;
+    esac
+  done
+
+  if [[ "$subcommand" == "list" ]]; then
+    if [[ "$json" -eq 1 ]]; then
+      backend_list_json
+    else
+      printf 'name\tkind\tcommand\tavailable\tnote\n'
+      while IFS=$'\t' read -r name kind command_name url note; do
+        [[ -n "$name" ]] || continue
+        if backend_command_available "$command_name"; then available=yes; else available=no; fi
+        printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$kind" "$command_name" "$available" "$note"
+      done <<EOF
+$(backend_builtin_rows)
+$(backend_custom_rows)
+EOF
+    fi
+    return
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.backend.doctor.v1",\n'
+    printf '  "registry": '
+    json_string "$registry"
+    printf ',\n  "checks": [\n'
+  else
+    printf 'OCW backend doctor\n'
+  fi
+
+  while IFS=$'\t' read -r name kind command_name url note; do
+    [[ -n "$name" ]] || continue
+    if backend_command_available "$command_name"; then
+      available=true
+    else
+      available=false
+      case "$name" in
+        opencode-go|opencode-local) status=1 ;;
+      esac
+    fi
+    if [[ "$json" -eq 1 ]]; then
+      if [[ "$first" -eq 0 ]]; then
+        printf ',\n'
+      fi
+      printf '    { "name": '
+      json_string "$name"
+      printf ', "command": '
+      json_string "$command_name"
+      printf ', "available": %s }' "$available"
+      first=0
+    else
+      printf '[%s] %s (%s)\n' "$([[ "$available" == true ]] && printf ok || printf missing)" "$name" "$command_name"
+    fi
+  done <<EOF
+$(backend_builtin_rows)
+$(backend_custom_rows)
+EOF
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '\n  ],\n  "ok": %s\n}\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
+  fi
+  return "$status"
+}
+
 report_write() {
   local out_file="$1"
   local tmp_file="$2"
@@ -3992,6 +4636,8 @@ set -euo pipefail
 
 if command -v ocw >/dev/null 2>&1; then
   ocw audit latest >/dev/null 2>&1 || true
+  ocw verdict latest >/dev/null 2>&1 || true
+  ocw savings --json >/dev/null 2>&1 || true
   ocw dashboard >/dev/null 2>&1 || true
 fi
 EOF
@@ -4006,6 +4652,47 @@ post-task hooks, or run it manually after worker-heavy sessions:
 ```bash
 .codex/ocw-hooks/post-task.sh
 ```
+EOF
+}
+
+install_project_mcp_config() {
+  local force="$1"
+
+  write_text_if_needed ".mcp.json" "OCW MCP project config" "$force" <<'EOF'
+{
+  "mcpServers": {
+    "ocw": {
+      "command": "ocw",
+      "args": ["mcp"]
+    }
+  }
+}
+EOF
+}
+
+install_claude_ocw_subagent() {
+  local force="$1"
+
+  write_text_if_needed ".claude/agents/ocw-worker.md" "Claude OCW worker subagent" "$force" <<'EOF'
+---
+name: ocw-worker
+description: Delegate bounded repository work to cheaper OCW workers, then hand results back for final Claude review.
+tools: Bash, Read, Grep, Glob
+---
+
+Use OCW for draft worker labor only. Keep tasks narrow.
+
+Prefer:
+
+```bash
+ocw delegate "Summarize the relevant files for this task"
+ocw delegate --mode review "Review the current diff for concrete bugs"
+ocw delegate --mode patch "Draft the smallest isolated fix"
+ocw verdict latest
+```
+
+Read `ocw show latest --summary`, run `ocw audit latest`, and never apply worker
+patches without primary-agent review.
 EOF
 }
 
@@ -4497,8 +5184,9 @@ quickstart_command() {
     printf '    "ocw bridge doctor",\n'
     printf '    "ocw bridge agents sync",\n'
     printf '    "ocw models sync",\n'
-    printf '    "ocw cheap \\"Summarize this repository\\"",\n'
-    printf '    "ocw explain latest"\n'
+    printf '    "ocw delegate \\"Summarize this repository\\"",\n'
+    printf '    "ocw verdict latest",\n'
+    printf '    "ocw savings"\n'
     printf '  ]\n'
     printf '}\n'
     return
@@ -4516,14 +5204,16 @@ OCW quickstart
 3. Sync OpenCode Go model catalog:
    ocw models sync
 
-4. Run a cheap worker:
-   ocw cheap "Summarize this repository"
+4. Delegate a bounded worker task:
+   ocw delegate "Summarize this repository"
 
-5. Read the friendly result:
-   ocw explain latest
+5. Check the handoff:
+   ocw verdict latest
+   ocw savings
 
 Useful next commands:
    ocw route explain
+   ocw backend doctor
    ocw bridge doctor
    ocw bridge codex-config
    ocw mcp audit
@@ -4588,6 +5278,16 @@ EOF
       copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
       install_agent_skill "Codex" "$codex_skills_dir"
       install_ocw_post_task_hook "$force"
+      install_project_mcp_config "$force"
+      if [[ "$force" -eq 1 ]]; then
+        bridge_install_command --force
+        bridge_agents_command sync --force
+        bridge_codex_config_command --write --project --force
+      else
+        bridge_install_command
+        bridge_agents_command sync
+        bridge_codex_config_command --write --project
+      fi
       ;;
     claude)
       ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
@@ -4598,6 +5298,8 @@ EOF
       if [[ "$project_skills" -eq 1 ]]; then
         install_agent_skill "project Claude Code" ".claude/skills"
       fi
+      install_project_mcp_config "$force"
+      install_claude_ocw_subagent "$force"
       if [[ "$force" -eq 1 ]]; then
         hooks_command install claude --force
       else
@@ -4643,6 +5345,17 @@ EOF
         hooks_command install all --force
       else
         hooks_command install all
+      fi
+      install_project_mcp_config "$force"
+      install_claude_ocw_subagent "$force"
+      if [[ "$force" -eq 1 ]]; then
+        bridge_install_command --force
+        bridge_agents_command sync --force
+        bridge_codex_config_command --write --project --force
+      else
+        bridge_install_command
+        bridge_agents_command sync
+        bridge_codex_config_command --write --project
       fi
       ;;
   esac
@@ -6544,7 +7257,8 @@ mcp_audit_command() {
   local -a required_tools=(
     ocw_run ocw_last ocw_show ocw_manifest ocw_audit ocw_report ocw_eval
     ocw_doctor ocw_apply_check ocw_apply ocw_stats ocw_models ocw_route
-    ocw_tournament ocw_memory ocw_dashboard ocw_bridge ocw_mcp_audit
+    ocw_tournament ocw_memory ocw_dashboard ocw_delegate ocw_verdict
+    ocw_savings ocw_backend ocw_bridge ocw_mcp_audit
   )
 
   while [[ $# -gt 0 ]]; do
@@ -6716,7 +7430,7 @@ mcp_doctor_command() {
     json_string "$node_path"
     printf ',\n  "ok": %s,\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
     printf '  "capabilities": ["tools", "resources", "prompts"],\n'
-    printf '  "tools": ["ocw_run", "ocw_last", "ocw_show", "ocw_manifest", "ocw_audit", "ocw_report", "ocw_eval", "ocw_doctor", "ocw_apply_check", "ocw_apply", "ocw_stats", "ocw_models", "ocw_route", "ocw_tournament", "ocw_memory", "ocw_dashboard", "ocw_bridge", "ocw_mcp_audit"]\n'
+    printf '  "tools": ["ocw_run", "ocw_last", "ocw_show", "ocw_manifest", "ocw_audit", "ocw_report", "ocw_eval", "ocw_doctor", "ocw_apply_check", "ocw_apply", "ocw_stats", "ocw_models", "ocw_route", "ocw_tournament", "ocw_memory", "ocw_dashboard", "ocw_delegate", "ocw_verdict", "ocw_savings", "ocw_backend", "ocw_bridge", "ocw_mcp_audit"]\n'
     printf '}\n'
   else
     printf 'OCW MCP server: %s\n' "$server"
@@ -6811,7 +7525,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+  commands="init uninstall config last show manifest audit apply clean delegate verdict savings backend stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -6899,7 +7613,7 @@ EOF
 _ocw() {
   local -a commands modes
   commands=(
-    init uninstall config last show manifest audit apply clean stats serve doctor models
+    init uninstall config last show manifest audit apply clean delegate verdict savings backend stats serve doctor models
     quickstart setup bridge route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension security
     homebrew support trace explain mcp-config completions mcp help version
   )
@@ -6922,6 +7636,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         setup) _values 'target' codex claude opencode copilot all ;;
         bridge) _values 'action' install start stop status doctor test codex-config agents ;;
+        backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list bench ;;
         route) _values 'action' explain set path ;;
         hooks) _values 'action' install ;;
@@ -6943,13 +7658,14 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean delegate verdict savings backend stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
 complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents"
+complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set path"
 complete -c ocw -n "__fish_seen_subcommand_from hooks" -f -a "install"
@@ -7061,6 +7777,26 @@ case "$1" in
     shift
     clean_command "$out_base" "$@"
     exit 0
+    ;;
+  delegate)
+    shift
+    delegate_command "$out_base" "$@"
+    exit $?
+    ;;
+  verdict)
+    shift
+    verdict_command "$out_base" "$@"
+    exit $?
+    ;;
+  savings)
+    shift
+    savings_command "$out_base" "$@"
+    exit $?
+    ;;
+  backend)
+    shift
+    backend_command "$@"
+    exit $?
     ;;
   stats)
     shift

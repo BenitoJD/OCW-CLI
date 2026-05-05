@@ -33,11 +33,13 @@ Bootstrap a project:
 ocw init
 ocw hooks install all
 ocw setup all
-ocw mcp-config all
+ocw delegate "Summarize this repository"
+ocw verdict latest
+ocw savings
 ocw bridge doctor
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want project files.
+This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, project MCP config, Claude worker subagent files, OCW Bridge runtime/config, bridge-backed Codex agent templates, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want the lighter project files.
 
 `ocw hooks install all` adds project-local helper files for Codex-style post-task audits, Claude Code hooks, GitHub Copilot custom instructions/prompts/agents, and OpenCode commands. Existing files are kept unless you pass `--force`.
 
@@ -313,6 +315,11 @@ ocw_route
 ocw_tournament
 ocw_memory
 ocw_dashboard
+ocw_delegate
+ocw_verdict
+ocw_savings
+ocw_backend
+ocw_bridge
 ocw_mcp_audit
 ```
 

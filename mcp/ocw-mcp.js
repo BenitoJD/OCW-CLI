@@ -253,6 +253,65 @@ const tools = [
     annotations: { readOnlyHint: false },
   },
   {
+    name: 'ocw_delegate',
+    description: 'Route a bounded task to the cheapest appropriate OCW worker mode and record a final-review handoff.',
+    inputSchema: schema({
+      ...commonProperties,
+      task: { type: 'string', minLength: 1, description: 'Bounded worker task.' },
+      mode: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'], description: 'Optional explicit worker mode.' },
+      model: { type: 'string', description: 'OpenCode model override.' },
+      agent: { type: 'string', description: 'OpenCode agent override.' },
+      variant: { type: 'string', description: 'OpenCode model variant.' },
+      attach: { type: 'string', description: 'OpenCode server attach URL.' },
+      files: { type: 'array', items: { type: 'string' }, description: 'Files to attach to the OpenCode prompt.' },
+      auto_approve: { type: 'boolean' },
+      require_clean: { type: 'boolean' },
+      worktree: { type: 'boolean' },
+      rm_worktree: { type: 'boolean' },
+      final_review: { type: 'boolean', description: 'Keep final review required. Defaults to true.' },
+      json: { type: 'boolean', description: 'Return JSON. Defaults to true.' },
+    }, ['task']),
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: 'ocw_verdict',
+    description: 'Return a final-review gate for a saved OCW run, including audit result and patch apply readiness.',
+    inputSchema: schema({
+      ...commonProperties,
+      ref: { type: 'string', description: 'Run directory, run basename, or latest. Defaults to latest.' },
+      json: { type: 'boolean', description: 'Return JSON. Defaults to true.' },
+    }),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'ocw_savings',
+    description: 'Estimate frontier-agent work avoided by OCW worker runs.',
+    inputSchema: schema({
+      ...commonProperties,
+      days: { type: 'integer', minimum: 0, maximum: 3650 },
+      frontier_cost_per_unit: { type: 'number', minimum: 0 },
+      worker_cost_per_unit: { type: 'number', minimum: 0 },
+      json: { type: 'boolean', description: 'Return JSON. Defaults to true.' },
+    }),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'ocw_backend',
+    description: 'List, add, remove, or doctor backend adapter records for OCW worker runtimes and gateways.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: { type: 'string', enum: ['list', 'add', 'remove', 'doctor', 'path'] },
+      name: { type: 'string', description: 'Backend name for add/remove.' },
+      kind: { type: 'string', description: 'Backend kind, for example provider, agent, or gateway.' },
+      command: { type: 'string', description: 'Command used to check or run the backend.' },
+      url: { type: 'string' },
+      note: { type: 'string' },
+      force: { type: 'boolean' },
+      json: { type: 'boolean', description: 'Return JSON where supported. Defaults to true for list/doctor/add.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
     name: 'ocw_bridge',
     description: 'Manage the OCW OpenCode Bridge runtime for Codex-native OSS subagents.',
     inputSchema: schema({
@@ -446,6 +505,20 @@ function runOcw(ocwArgs, args) {
   const stderr = truncate(result.stderr || '', limit);
   const status = result.status === null ? 1 : result.status;
   const outputDirMatch = (result.stdout || '').match(/OCW (?:output|benchmark output|batch output|eval output|tournament output|PR [a-z]+ output): (.+)/);
+  let jsonOutputDir;
+  try {
+    const parsed = JSON.parse(result.stdout || '{}');
+    if (
+      parsed
+      && typeof parsed.schema_version === 'string'
+      && parsed.schema_version.startsWith('ocw.')
+      && typeof parsed.output_dir === 'string'
+    ) {
+      jsonOutputDir = parsed.output_dir;
+    }
+  } catch (_) {
+    jsonOutputDir = undefined;
+  }
   const errorCode = classifyError(status, result.stderr || result.stdout || '');
 
   return {
@@ -458,7 +531,7 @@ function runOcw(ocwArgs, args) {
     stdout_truncated: stdout.truncated,
     stderr_truncated: stderr.truncated,
     error_code: errorCode,
-    output_dir: outputDirMatch ? outputDirMatch[1].trim() : undefined,
+    output_dir: jsonOutputDir || (outputDirMatch ? outputDirMatch[1].trim() : undefined),
   };
 }
 
@@ -748,6 +821,97 @@ function callTool(name, args) {
     const out = assertString(input.out, 'out');
     if (out) ocwArgs.push('--out', out);
     if (assertBoolean(input.json, 'json')) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_delegate') {
+    const task = assertString(input.task, 'task', true);
+    const ocwArgs = ['delegate'];
+    const mode = assertString(input.mode, 'mode');
+    if (mode) ocwArgs.push('--mode', mode);
+    const flags = [
+      ['model', '--model'],
+      ['agent', '--agent'],
+      ['variant', '--variant'],
+      ['attach', '--attach'],
+    ];
+    for (const [key, flag] of flags) {
+      const value = assertString(input[key], key);
+      if (value) ocwArgs.push(flag, value);
+    }
+    for (const file of assertStringArray(input.files, 'files')) {
+      ocwArgs.push('--file', file);
+    }
+    if (assertBoolean(input.auto_approve, 'auto_approve')) ocwArgs.push('--auto-approve');
+    if (assertBoolean(input.require_clean, 'require_clean')) ocwArgs.push('--require-clean');
+    if (assertBoolean(input.worktree, 'worktree')) ocwArgs.push('--worktree');
+    if (assertBoolean(input.rm_worktree, 'rm_worktree')) ocwArgs.push('--rm-worktree');
+    if (input.final_review === false) ocwArgs.push('--no-final-review');
+    if (input.json !== false) ocwArgs.push('--json');
+    ocwArgs.push(task);
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_verdict') {
+    const ref = assertString(input.ref, 'ref') || 'latest';
+    const ocwArgs = ['verdict', ref];
+    if (input.json !== false) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_savings') {
+    const ocwArgs = ['savings'];
+    if (input.days !== undefined && input.days !== null) {
+      if (!Number.isInteger(input.days) || input.days < 0 || input.days > 3650) {
+        throw new Error('days must be an integer between 0 and 3650');
+      }
+      ocwArgs.push('--days', String(input.days));
+    }
+    if (input.frontier_cost_per_unit !== undefined && input.frontier_cost_per_unit !== null) {
+      if (typeof input.frontier_cost_per_unit !== 'number' || input.frontier_cost_per_unit < 0) {
+        throw new Error('frontier_cost_per_unit must be a non-negative number');
+      }
+      ocwArgs.push('--frontier-cost-per-unit', String(input.frontier_cost_per_unit));
+    }
+    if (input.worker_cost_per_unit !== undefined && input.worker_cost_per_unit !== null) {
+      if (typeof input.worker_cost_per_unit !== 'number' || input.worker_cost_per_unit < 0) {
+        throw new Error('worker_cost_per_unit must be a non-negative number');
+      }
+      ocwArgs.push('--worker-cost-per-unit', String(input.worker_cost_per_unit));
+    }
+    if (input.json !== false) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_backend') {
+    const action = assertString(input.action, 'action', true);
+    if (!['list', 'add', 'remove', 'doctor', 'path'].includes(action)) {
+      throw new Error(`unsupported backend action: ${action}`);
+    }
+    const ocwArgs = ['backend', action];
+    const backendName = assertString(input.name, 'name');
+    if (['add', 'remove'].includes(action)) {
+      if (!backendName) throw new Error('name is required for backend add/remove');
+      ocwArgs.push(backendName);
+    }
+    if (action === 'add') {
+      const fields = [
+        ['kind', '--kind'],
+        ['command', '--command'],
+        ['url', '--url'],
+        ['note', '--note'],
+      ];
+      for (const [key, flag] of fields) {
+        const value = assertString(input[key], key);
+        if (value) ocwArgs.push(flag, value);
+      }
+      if (assertBoolean(input.force, 'force')) ocwArgs.push('--force');
+    }
+    if (input.json !== false && ['list', 'doctor', 'add'].includes(action)) ocwArgs.push('--json');
     result = runOcw(ocwArgs, input);
     return toolResponse(name, result);
   }

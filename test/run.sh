@@ -724,6 +724,38 @@ EOF
   OCW_TEST_STAMP="world-route" run_ocw cheap "route file should drive this worker" >/dev/null
   assert_contains ".out/world-route-cheap/metadata.txt" "model=opencode-go/test-a"
 
+  OCW_TEST_STAMP="world-delegate" run_ocw delegate --mode review --json "Review current diff for concrete bugs" > "$TMP_ROOT/delegate.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/delegate.json"
+  assert_contains "$TMP_ROOT/delegate.json" '"schema_version": "ocw.delegate.v1"'
+  assert_contains ".out/world-delegate-review/metadata.txt" "delegate=1"
+  assert_file ".out/world-delegate-review/delegate.md"
+
+  OCW_TEST_STAMP="world-debug" run_ocw delegate --json "debug the rate limiter path" > "$TMP_ROOT/delegate-debug.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.mode !== 'cheap') process.exit(1)" "$TMP_ROOT/delegate-debug.json"
+
+  OCW_OUTPUT_ROOT=".out" "$OCW" verdict latest --json > "$TMP_ROOT/verdict.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/verdict.json"
+  assert_contains "$TMP_ROOT/verdict.json" '"schema_version": "ocw.verdict.v1"'
+
+  OCW_OUTPUT_ROOT=".out" "$OCW" savings --json --frontier-cost-per-unit 1 --worker-cost-per-unit 0.1 > "$TMP_ROOT/savings.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/savings.json"
+  assert_contains "$TMP_ROOT/savings.json" '"schema_version": "ocw.savings.v1"'
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if ((j.delegated_runs || 0) < 1) process.exit(1)" "$TMP_ROOT/savings.json"
+
+  "$OCW" backend list --json > "$TMP_ROOT/backend-list.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/backend-list.json"
+  assert_contains "$TMP_ROOT/backend-list.json" '"name": "opencode-go"'
+  "$OCW" backend add opencode-go --force --json > "$TMP_ROOT/backend-add.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/backend-add.json"
+  "$OCW" backend add custom-local --kind agent --command "$MOCK_OPENCODE" --note "custom test adapter" --force --json > "$TMP_ROOT/backend-custom-add.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/backend-custom-add.json"
+  "$OCW" backend list --json > "$TMP_ROOT/backend-custom-list.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const b = j.backends.find((item) => item.name === 'custom-local'); if (!b || b.command !== process.argv[2] || b.available !== true) process.exit(1)" "$TMP_ROOT/backend-custom-list.json" "$MOCK_OPENCODE"
+  OCW_OPENCODE_BIN="$MOCK_OPENCODE" "$OCW" backend doctor --json > "$TMP_ROOT/backend-doctor.json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$TMP_ROOT/backend-doctor.json"
+  assert_contains "$TMP_ROOT/backend-doctor.json" '"name": "opencode-go"'
+  assert_contains "$TMP_ROOT/backend-doctor.json" '"name": "custom-local"'
+
   "$OCW" memory add framework "OCW is implemented as a Bash CLI" --tags cli >/dev/null
   "$OCW" memory search framework > "$TMP_ROOT/memory-search.txt"
   assert_contains "$TMP_ROOT/memory-search.txt" "Bash CLI"
@@ -853,6 +885,13 @@ EOF
   assert_contains ".out/auth-fail-cheap/metadata.txt" "status=42"
   assert_contains ".out/auth-fail-cheap/summary.md" "MOCK_AUTH_FAIL"
 
+  set +e
+  OCW_OUTPUT_ROOT=".out" "$OCW" verdict auth-fail-cheap --json > "$TMP_ROOT/verdict-fail.json"
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "expected failed verdict to be nonzero"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.overall !== 'fail') process.exit(1)" "$TMP_ROOT/verdict-fail.json"
+
   quick_json="$TMP_ROOT/quickstart.json"
   "$OCW" quickstart --json > "$quick_json"
   node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$quick_json"
@@ -862,6 +901,10 @@ EOF
   OCW_CODEX_SKILLS_DIR="$codex_skills" "$OCW" setup codex --force --json > "$setup_json"
   node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$setup_json"
   assert_file "AGENTS.md"
+  assert_file ".mcp.json"
+  assert_file ".codex/config.toml"
+  assert_file ".codex/ocw-bridge/bridge.py"
+  assert_file ".codex/agents/oss-kimi-rapid.toml"
   assert_file ".codex/ocw-hooks/post-task.sh"
   assert_file "$codex_skills/opencode-worker/SKILL.md"
 

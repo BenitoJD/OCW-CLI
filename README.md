@@ -25,6 +25,7 @@ Use it when you want:
 - bounded patch drafts in an isolated worktree
 - repeatable worker artifacts that are easy for another agent to read
 - Codex-native OSS subagents backed by OpenCode Go models
+- a cost/savings ledger and final-review gate around worker output
 
 The safety model is intentionally conservative: worker output is draft labor. Your main agent, your tests, and your code review remain the final authority.
 
@@ -119,6 +120,9 @@ ocw agents sync
 
 This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents. `ocw agents sync|diff|doctor` is the easiest project-local integration flow when you want repeatable setup across many repos.
 
+`ocw setup all` also installs project MCP config, Claude worker subagent files,
+OCW Bridge runtime/config, and bridge-backed Codex agent templates.
+
 Enable Codex-native OSS subagents through OCW Bridge:
 
 ```bash
@@ -141,6 +145,19 @@ ocw config init --force
 ```
 
 ## Usage
+
+```bash
+ocw delegate "Find the likely files for this bug"
+ocw delegate --mode review "Review the current diff for concrete bugs"
+ocw delegate --mode patch "Draft the smallest isolated fix"
+ocw verdict latest
+ocw savings
+ocw backend doctor
+```
+
+`ocw delegate` chooses a worker mode from the task when you do not pass
+`--mode`. Patch delegation defaults to an isolated git worktree. `ocw verdict`
+keeps final review explicit; worker output remains draft labor.
 
 ```bash
 ocw explore "Find where auth errors are handled"
@@ -380,6 +397,10 @@ ocw_route
 ocw_tournament
 ocw_memory
 ocw_dashboard
+ocw_delegate
+ocw_verdict
+ocw_savings
+ocw_backend
 ocw_bridge
 ocw_mcp_audit
 ```
@@ -582,16 +603,17 @@ ocw --require-clean patch "Make the change"
 Ask Codex to delegate bounded work:
 
 ```text
-Use ocw explore to inspect the auth flow, then review the summary and decide what to inspect yourself.
+Use ocw delegate to inspect the auth flow, then run ocw verdict latest and decide what to inspect yourself.
 ```
 
 Codex should treat OpenCode output as draft labor:
 
-1. Run `ocw`.
+1. Run `ocw delegate`.
 2. Read `summary.md`.
-3. Inspect relevant files or `diff.after.patch`.
-4. Apply or reject the worker output.
-5. Run tests.
+3. Run `ocw verdict latest`.
+4. Inspect relevant files or `diff.after.patch`.
+5. Apply or reject the worker output.
+6. Run tests.
 
 ## Project Config
 
@@ -633,6 +655,9 @@ OCW_REVIEW_MODEL     Override review default model
 OCW_PATCH_MODEL      Override patch default model
 OCW_SCAN_MODEL       Override scan default model
 OCW_CHEAP_MODEL      Override cheap default model
+OCW_BACKENDS_FILE    Override backend adapter registry path
+OCW_FRONTIER_COST_PER_UNIT  Override savings estimate frontier unit cost
+OCW_WORKER_COST_PER_UNIT    Override savings estimate worker unit cost
 ```
 
 ## Tests
@@ -643,7 +668,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, delegate routing, verdict gates, savings estimates, backend adapter records, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

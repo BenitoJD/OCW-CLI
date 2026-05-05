@@ -5,6 +5,9 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 ## Modes
 
 - `ocw cheap "<task>"` for cheap routine analysis.
+- `ocw delegate "<task>"` to auto-route a bounded worker task.
+- `ocw verdict latest` after a delegated run to keep final review explicit.
+- `ocw savings` to summarize worker usage and estimated frontier work avoided.
 - `ocw explore "<task>"` for normal repo exploration.
 - `ocw scan "<task>"` for broad or long-context scans.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.
@@ -22,6 +25,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 ## Rules
 
 - Keep worker tasks narrow and explicit.
+- Prefer `ocw delegate` when the best worker mode is not obvious.
 - Prefer read-only modes before patch mode.
 - Use `--worktree` for patch drafts in important repositories.
 - Use `ocw show latest --summary` to read the newest worker result.

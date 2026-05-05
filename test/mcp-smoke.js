@@ -114,8 +114,10 @@ function createClient(repo) {
       'ocw_apply',
       'ocw_apply_check',
       'ocw_audit',
+      'ocw_backend',
       'ocw_bridge',
       'ocw_dashboard',
+      'ocw_delegate',
       'ocw_doctor',
       'ocw_eval',
       'ocw_last',
@@ -126,9 +128,11 @@ function createClient(repo) {
       'ocw_report',
       'ocw_route',
       'ocw_run',
+      'ocw_savings',
       'ocw_show',
       'ocw_stats',
       'ocw_tournament',
+      'ocw_verdict',
     ].sort());
 
     const common = { cwd: repo, output_root: '.out' };
@@ -226,6 +230,39 @@ function createClient(repo) {
     });
     assert.equal(dashboard.structuredContent.status, 0);
     assert.match(dashboard.structuredContent.stdout, /ocw\.dashboard\.v1/);
+
+    const delegated = await client.request('tools/call', {
+      name: 'ocw_delegate',
+      arguments: {
+        ...common,
+        mode: 'review',
+        task: 'MCP delegate review pass',
+      },
+    });
+    assert.equal(delegated.structuredContent.status, 0);
+    assert.match(delegated.structuredContent.output_dir, /review$/);
+    assert.match(delegated.structuredContent.stdout, /ocw\.delegate\.v1/);
+
+    const verdict = await client.request('tools/call', {
+      name: 'ocw_verdict',
+      arguments: { ...common, ref: 'latest' },
+    });
+    assert.equal(verdict.structuredContent.status, 0);
+    assert.match(verdict.structuredContent.stdout, /ocw\.verdict\.v1/);
+
+    const savings = await client.request('tools/call', {
+      name: 'ocw_savings',
+      arguments: { ...common, days: 0 },
+    });
+    assert.equal(savings.structuredContent.status, 0);
+    assert.match(savings.structuredContent.stdout, /ocw\.savings\.v1/);
+
+    const backend = await client.request('tools/call', {
+      name: 'ocw_backend',
+      arguments: { ...common, action: 'list' },
+    });
+    assert.equal(backend.structuredContent.status, 0);
+    assert.match(backend.structuredContent.stdout, /ocw\.backend\.v1/);
 
     const tournament = await client.request('tools/call', {
       name: 'ocw_tournament',
