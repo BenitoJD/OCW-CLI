@@ -29,6 +29,76 @@ Use it when you want:
 
 The safety model is intentionally conservative: worker output is draft labor. Your main agent, your tests, and your code review remain the final authority.
 
+## Copy-Paste Codex Setup
+
+The easiest way to use OCW is to let Codex wire it for you. Open Codex in the
+project where you want cheaper OpenCode Go workers, paste this prompt, and
+continue working after Codex reports that the bridge test passed.
+
+```text
+Set up OCW in this project so Codex can use my OpenCode Go subscription for cheaper worker tasks.
+
+Goal:
+- Keep Codex as the orchestrator and final reviewer.
+- Install/configure OCW with no manual steps from me except providing my OpenCode Go API key.
+- Enable both OCW shell/MCP workers and Codex-native OpenCode Go bridge models.
+- Do not commit secrets or generated worker artifacts.
+
+Steps:
+1. Check whether `ocw` is available with `command -v ocw` and `ocw version`.
+2. If `ocw` is missing, install it from GitHub:
+   `curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | bash`
+   Then make sure the installed `ocw` is on PATH.
+3. Run `ocw doctor --deep`.
+4. Run `ocw setup codex --force`.
+5. Run `ocw bridge install --force`.
+6. Run `ocw bridge agents sync --force`.
+7. Run `ocw bridge orchestration sync --force`.
+8. Ask me for my OpenCode Go API key.
+9. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
+   `OPENCODE_GO_API_KEY=<my key>`
+10. Confirm `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+11. Run `ocw bridge codex-config --write --project --force`.
+12. Start or restart the bridge with `ocw bridge start`.
+13. Run `ocw bridge test --live`.
+14. Show me the ready provider name, the ready `ocg-*` models, and two examples:
+    - one command that uses OCW CLI workers
+    - one Codex command or instruction that uses the `opencode_bridge` provider
+    - whether I need to restart Codex for the new provider config to be picked up
+
+Rules:
+- Do not print my API key back to me.
+- Do not commit `.codex/ocw-bridge/opencode-go.env`.
+- Treat OpenCode Go worker output as draft labor; Codex still does final review and tests.
+- If a command fails, find and fix the root cause instead of bypassing the check.
+```
+
+When setup finishes, Codex should be able to use:
+
+```text
+Provider: opencode_bridge
+Models: ocg-deepseek-v4-flash, ocg-deepseek-v4-pro, ocg-kimi-k2.6,
+        ocg-qwen3.6-plus, ocg-mimo-v2.5, ocg-minimax-m2.7, and the rest
+        of the OpenCode Go catalog.
+```
+
+If the current Codex session does not see `opencode_bridge` immediately, start
+a new Codex session in the same project after setup. The project config and
+agent files will already be written.
+
+Examples after setup:
+
+```bash
+ocw delegate "Map this repository and tell me where to start"
+ocw review "Review the current diff for concrete bugs"
+ocw --worktree patch "Draft the smallest safe fix"
+```
+
+```text
+Use the opencode_bridge provider with model ocg-deepseek-v4-flash to summarize
+this repository cheaply. Keep Codex responsible for the final answer.
+```
+
 ## Install
 
 Install from a GitHub Release:
