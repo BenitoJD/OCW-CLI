@@ -22,23 +22,19 @@ Steps:
    Then make sure the installed `ocw` is on PATH.
 3. Run `ocw doctor --deep`.
 4. Run `ocw setup codex --force`.
-5. Run `ocw bridge install --force`.
-6. Run `ocw bridge agents sync --force`.
-7. Run `ocw bridge workers sync --force`.
-8. Run `ocw bridge orchestration sync --force`.
-9. Ask me for my OpenCode Go API key.
-10. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
+5. Run `ocw bridge setup --force`.
+6. Ask me for my OpenCode Go API key.
+7. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
    `OPENCODE_GO_API_KEY=<my key>`
-11. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
-12. Run `ocw bridge codex-config --write --project --force`.
-13. Start or restart the bridge with `ocw bridge start`.
-14. Run `ocw bridge test --live`.
-15. Run `ocw bridge workers doctor`.
-16. Show me the ready provider name, the ready `ocg-*` models, and two examples:
+8. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+9. Start or restart the bridge with `ocw bridge start --timeout 60`.
+10. Run `ocw bridge test --live`.
+11. Run `ocw bridge workers doctor`.
+12. Show me the ready provider name, the ready `ocg-*` models, and two examples:
     - one command that uses OCW CLI workers
     - one Codex instruction that asks Codex to spawn a worker or explorer backed by `opencode_bridge`
     - whether I need to restart Codex for the new provider config to be picked up
-17. If `opencode_bridge` is not visible in this Codex session, tell me to start a
+13. If `opencode_bridge` is not visible in this Codex session, tell me to start a
     new Codex session in this same project.
 
 Rules:
@@ -56,6 +52,7 @@ For the live bridge test, save your OpenCode Go key in
 ```bash
 ocw doctor --deep
 ocw setup all
+ocw bridge setup --force
 ocw bridge start
 ocw bridge test --live
 ocw bridge doctor
@@ -131,11 +128,7 @@ Use OCW Bridge when you want OpenCode Go models to appear as Codex-native model
 provider agents:
 
 ```bash
-ocw bridge install
-ocw bridge agents sync
-ocw bridge workers sync
-ocw bridge orchestration sync
-ocw bridge codex-config --write --project
+ocw bridge setup --force
 ocw bridge start
 ocw bridge test --live
 ```

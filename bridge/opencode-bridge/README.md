@@ -12,15 +12,15 @@ When this runtime is installed through OCW, use the OCW commands instead of
 copying files by hand:
 
 ```bash
-ocw bridge install
-ocw bridge agents sync
-ocw bridge orchestration sync
-ocw bridge codex-config --write --project
+ocw bridge setup --force
 ocw bridge start
+ocw bridge test --live
 ```
 
 OCW also installs generic helper scripts under `.codex/ocw-bridge/bin/`:
 `oss-scout`, `oss-review`, `oss-docs`, and `oss-patch`.
+It also installs `worker.toml` and `explorer.toml` overrides so Codex's
+built-in worker/explorer roles can run through OpenCode Go.
 
 ### Zero-config: just tell Codex
 

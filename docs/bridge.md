@@ -13,12 +13,16 @@ Set your OpenCode Go API key before the live bridge test, either in your shell
 or in `.codex/ocw-bridge/opencode-go.env`.
 
 ```bash
-ocw bridge install
-ocw bridge agents sync
-ocw bridge orchestration sync
-ocw bridge codex-config --write --project
+ocw bridge setup --force
 ocw bridge start
 ocw bridge test --live
+```
+
+If `OPENCODE_GO_API_KEY` is already available, one command can also set up,
+start, and verify the bridge:
+
+```bash
+ocw bridge setup --force --live
 ```
 
 Shell example:
@@ -55,6 +59,7 @@ to Codex.
 ## Commands
 
 ```bash
+ocw bridge setup
 ocw bridge install
 ocw bridge start [--timeout SECONDS]
 ocw bridge stop
@@ -69,6 +74,11 @@ ocw bridge workers sync
 ocw bridge workers doctor
 ocw bridge orchestration sync
 ```
+
+`ocw bridge setup --force` is the preferred project setup command. It runs
+`install`, `agents sync`, `workers sync`, `orchestration sync`,
+`codex-config --write --project`, `workers doctor`, and `bridge doctor` in the
+right order.
 
 ## Codex Config
 

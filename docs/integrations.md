@@ -37,13 +37,19 @@ Bootstrap a project:
 ocw init
 ocw hooks install all
 ocw setup all
+ocw bridge setup --force
 ocw delegate "Summarize this repository"
 ocw verdict latest
 ocw savings
 ocw bridge doctor
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, project MCP config, Claude worker subagent files, OCW Bridge runtime/config, bridge-backed Codex agent templates, the bridge orchestration pack, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want the lighter project files.
+This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`,
+project MCP config, Claude worker subagent files, OCW Bridge runtime/config,
+bridge-backed Codex agent templates, Codex `worker`/`explorer` overrides, the
+bridge orchestration pack, and personal/global skills for Codex, Claude Code,
+OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when
+you only want the lighter project files.
 
 `ocw hooks install all` adds project-local helper files for Codex-style post-task audits, Claude Code hooks, GitHub Copilot custom instructions/prompts/agents, and OpenCode commands. Existing files are kept unless you pass `--force`.
 
@@ -61,12 +67,9 @@ Use OCW Bridge when Codex should spawn OpenCode Go backed native subagents via
 a local Responses-compatible provider:
 
 ```bash
-ocw bridge install
-ocw bridge agents sync
-ocw bridge orchestration sync
-ocw bridge codex-config --write --project
+ocw bridge setup --force
 ocw bridge start
-ocw bridge test
+ocw bridge test --live
 ```
 
 Set `OPENCODE_GO_API_KEY` in the shell or in `.codex/ocw-bridge/opencode-go.env`

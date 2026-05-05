@@ -991,6 +991,8 @@ EOF
   assert_file ".codex/config.toml"
   assert_file ".codex/ocw-bridge/bridge.py"
   assert_file ".codex/agents/oss-kimi-rapid.toml"
+  assert_file ".codex/agents/worker.toml"
+  assert_file ".codex/agents/explorer.toml"
   assert_file ".codex/ocw-hooks/post-task.sh"
   assert_file "$codex_skills/opencode-worker/SKILL.md"
 
@@ -1170,17 +1172,25 @@ test_pr_review_command() {
 
 test_bridge_command() {
   local repo="$TMP_ROOT/bridge"
-  local port config install_json doctor_json test_json status_json start_output stop_output
+  local port setup_start_port config install_json doctor_json test_json status_json start_output stop_output
+  local setup_start_repo
   make_repo "$repo"
   cd "$repo"
   port=$((4300 + RANDOM % 1000))
+  setup_start_port=$((5300 + RANDOM % 1000))
 
-  "$OCW" bridge --help >/dev/null
+  "$OCW" bridge --help > "$TMP_ROOT/bridge-help.txt"
+  assert_contains "$TMP_ROOT/bridge-help.txt" "ocw bridge setup"
 
   if "$OCW" bridge status --port "bad-port" > "$TMP_ROOT/bridge-bad-port.out" 2> "$TMP_ROOT/bridge-bad-port.err"; then
     fail "expected bridge status to reject invalid port"
   fi
   assert_contains "$TMP_ROOT/bridge-bad-port.err" "invalid bridge port"
+
+  if "$OCW" bridge setup --port "bad-port" > "$TMP_ROOT/bridge-setup-bad-port.out" 2> "$TMP_ROOT/bridge-setup-bad-port.err"; then
+    fail "expected bridge setup to reject invalid port"
+  fi
+  assert_contains "$TMP_ROOT/bridge-setup-bad-port.err" "invalid bridge port"
 
   config="$TMP_ROOT/bridge-codex-config.toml"
   "$OCW" bridge codex-config --port "$port" > "$config"
@@ -1188,6 +1198,35 @@ test_bridge_command() {
   assert_contains "$config" "base_url = \"http://127.0.0.1:$port/v1\""
   assert_contains "$config" "[model_providers.opencode_bridge.auth]"
   assert_contains "$config" "OCW_BRIDGE_KEY"
+
+  "$OCW" bridge setup --force --port "$port" > "$TMP_ROOT/bridge-setup.txt"
+  assert_contains "$TMP_ROOT/bridge-setup.txt" "OCW bridge setup complete"
+  assert_file ".codex/ocw-bridge/bridge.py"
+  assert_file ".codex/agents/worker.toml"
+  assert_file ".codex/agents/explorer.toml"
+  assert_file ".codex/agents/oss-deepseek-pro.toml"
+  assert_file ".codex/ocw-bridge-orchestration/ROUTING.md"
+  assert_contains ".codex/config.toml" "base_url = \"http://127.0.0.1:$port/v1\""
+  assert_contains "$TMP_ROOT/bridge-setup.txt" "OCW bridge workers doctor: ok"
+  assert_contains "$TMP_ROOT/bridge-setup.txt" "OCW bridge doctor: warn"
+
+  "$OCW" bridge setup --port "$((port + 1))" > "$TMP_ROOT/bridge-setup-nonforce.txt"
+  assert_contains "$TMP_ROOT/bridge-setup-nonforce.txt" "Kept existing Codex bridge config"
+  assert_contains ".codex/config.toml" "base_url = \"http://127.0.0.1:$port/v1\""
+  assert_not_contains ".codex/config.toml" "base_url = \"http://127.0.0.1:$((port + 1))/v1\""
+
+  setup_start_repo="$TMP_ROOT/bridge-setup-start"
+  make_repo "$setup_start_repo"
+  (
+    cd "$setup_start_repo"
+    "$OCW" bridge setup --force --start --port "$setup_start_port" --timeout 30 > "$TMP_ROOT/bridge-setup-start.txt" 2> "$TMP_ROOT/bridge-setup-start.err"
+    assert_contains "$TMP_ROOT/bridge-setup-start.txt" "OCW bridge started"
+    assert_contains "$TMP_ROOT/bridge-setup-start.txt" "Re-run ocw bridge test --live"
+    "$OCW" bridge status --json --port "$setup_start_port" > "$TMP_ROOT/bridge-setup-start-status.json"
+    node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.running || !data.health) process.exit(1)" "$TMP_ROOT/bridge-setup-start-status.json"
+    "$OCW" bridge stop > "$TMP_ROOT/bridge-setup-start-stop.txt"
+    assert_contains "$TMP_ROOT/bridge-setup-start-stop.txt" "OCW bridge"
+  )
 
   install_json="$TMP_ROOT/bridge-install.json"
   "$OCW" bridge install --force --json > "$install_json"
@@ -1211,6 +1250,10 @@ test_bridge_command() {
   assert_contains ".gitignore" ".codex/ocw-bridge/"
   assert_contains ".gitignore" ".codex/ocw-bridge-results/"
   assert_contains ".gitignore" ".codex/ocw-bridge-worktrees/"
+  rm -rf ".codex/ocw-bridge/workers"
+  "$OCW" bridge install > "$TMP_ROOT/bridge-install-refresh.txt"
+  assert_file ".codex/ocw-bridge/workers/worker.toml"
+  assert_file ".codex/ocw-bridge/workers/explorer.toml"
 
   "$OCW" bridge agents sync --force > "$TMP_ROOT/bridge-agents.txt"
   assert_file ".codex/agents/oss-deepseek-pro.toml"

@@ -54,7 +54,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
-  ocw bridge install|start|stop|status|doctor|test|codex-config|agents|workers|orchestration [options]
+  ocw bridge setup|install|start|stop|status|doctor|test|codex-config|agents|workers|orchestration [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
@@ -6327,9 +6327,8 @@ quickstart_command() {
     printf '  "commands": [\n'
     printf '    "ocw doctor --deep",\n'
     printf '    "ocw setup all",\n'
+    printf '    "ocw bridge setup --force",\n'
     printf '    "ocw bridge doctor",\n'
-    printf '    "ocw bridge agents sync",\n'
-    printf '    "ocw bridge workers sync",\n'
     printf '    "ocw bridge workers doctor",\n'
     printf '    "ocw models sync",\n'
     printf '    "ocw models configure balanced",\n'
@@ -6352,20 +6351,23 @@ OCW quickstart
 2. Install project integrations:
    ocw setup all
 
-3. Sync OpenCode Go model catalog:
+3. Set up Codex-native OpenCode Go workers:
+   ocw bridge setup --force
+
+4. Sync OpenCode Go model catalog:
    ocw models sync
 
-4. Configure project model routes:
+5. Configure project model routes:
    ocw models configure balanced
    ocw route doctor
 
-5. Check API key rotation:
+6. Check API key rotation:
    ocw keys doctor
 
-6. Delegate a bounded worker task:
+7. Delegate a bounded worker task:
    ocw delegate "Summarize this repository"
 
-7. Check the handoff:
+8. Check the handoff:
    ocw verdict latest
    ocw savings
 
@@ -6373,9 +6375,8 @@ Useful next commands:
    ocw route explain
    ocw keys list
    ocw backend doctor
+   ocw bridge setup --force
    ocw bridge doctor
-   ocw bridge codex-config
-   ocw bridge workers sync
    ocw bridge workers doctor
    ocw mcp audit
    ocw policy init strict
@@ -6442,11 +6443,13 @@ EOF
       if [[ "$force" -eq 1 ]]; then
         bridge_install_command --force
         bridge_agents_command sync --force
+        bridge_workers_command sync --force
         bridge_orchestration_command sync --force
         bridge_codex_config_command --write --project --force
       else
         bridge_install_command
         bridge_agents_command sync
+        bridge_workers_command sync
         bridge_orchestration_command sync
         bridge_codex_config_command --write --project
       fi
@@ -6511,11 +6514,13 @@ EOF
       if [[ "$force" -eq 1 ]]; then
         bridge_install_command --force
         bridge_agents_command sync --force
+        bridge_workers_command sync --force
         bridge_orchestration_command sync --force
         bridge_codex_config_command --write --project --force
       else
         bridge_install_command
         bridge_agents_command sync
+        bridge_workers_command sync
         bridge_orchestration_command sync
         bridge_codex_config_command --write --project
       fi
@@ -6768,7 +6773,7 @@ bridge_install_command() {
   fi
 
   if [[ "$installed_runtime" -eq 0 ]]; then
-    mkdir -p "$target_dir/bin" "$target_dir/orchestration"
+    mkdir -p "$target_dir/bin" "$target_dir/orchestration" "$target_dir/workers"
     for file in start-proxy oss-lib oss-scout oss-review oss-docs oss-patch; do
       if [[ -f "$source_dir/bin/$file" ]]; then
         copy_if_needed "$source_dir/bin/$file" "$target_dir/bin/$file" "bridge helper" "$force"
@@ -6777,6 +6782,10 @@ bridge_install_command() {
     for file in "$source_dir"/orchestration/*.md; do
       [[ -f "$file" ]] || continue
       copy_if_needed "$file" "$target_dir/orchestration/$(basename "$file")" "bridge orchestration doc" "$force"
+    done
+    for file in "$source_dir"/workers/*.toml; do
+      [[ -f "$file" ]] || continue
+      copy_if_needed "$file" "$target_dir/workers/$(basename "$file")" "bridge worker override" "$force"
     done
   fi
 
@@ -6838,6 +6847,9 @@ bridge_agents_command() {
   esac
 
   source_dir="$(bridge_runtime_dir)"
+  if [[ ! -d "$source_dir/agents" && -d "$(bridge_vendor_dir)/agents" ]]; then
+    source_dir="$(bridge_vendor_dir)"
+  fi
   [[ -d "$source_dir/agents" ]] || die "bridge agents not found: $source_dir/agents"
   mkdir -p "$target_dir"
   for file in "$source_dir"/agents/*.toml; do
@@ -7363,11 +7375,101 @@ bridge_codex_config_command() {
   fi
 }
 
+bridge_setup_command() {
+  local force=0
+  local start=0
+  local live=0
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local timeout="${OCW_BRIDGE_START_TIMEOUT:-60}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      --start) start=1; shift ;;
+      --live) live=1; start=1; shift ;;
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw bridge setup [--force] [--start] [--live] [--host HOST] [--port PORT] [--timeout SECONDS]
+
+Sets up the core Codex integration in the current project:
+- bridge runtime and env template
+- Codex model provider config
+- bridge-native agent templates
+- built-in worker/explorer overrides
+- orchestration routing docs
+
+Use --live after setting OPENCODE_GO_API_KEY to start the bridge and verify
+real /v1/models reachability.
+EOF
+        return
+        ;;
+      *) die "unknown bridge setup option: $1" ;;
+    esac
+  done
+
+  bridge_validate_port "$port"
+  ensure_ocw_gitignore_entries ".gitignore"
+
+  if [[ "$force" -eq 1 ]]; then
+    bridge_install_command --force
+    bridge_agents_command sync --force
+    bridge_workers_command sync --force
+    bridge_orchestration_command sync --force
+    bridge_codex_config_command --write --project --force --port "$port"
+  else
+    bridge_install_command
+    bridge_agents_command sync
+    bridge_workers_command sync
+    bridge_orchestration_command sync
+    bridge_codex_config_command --write --project --port "$port"
+  fi
+
+  bridge_workers_command doctor
+  bridge_doctor_command --host "$host" --port "$port"
+
+  if [[ "$start" -eq 1 ]]; then
+    bridge_start_command --host "$host" --port "$port" --timeout "$timeout"
+    if [[ "$live" -eq 1 ]]; then
+      bridge_test_command --live --host "$host" --port "$port"
+    fi
+  fi
+
+  if [[ "$start" -eq 1 ]]; then
+    cat <<EOF
+OCW bridge setup complete.
+
+Next steps:
+1. Start a new Codex session in this project so .codex/config.toml and .codex/agents/*.toml are loaded.
+2. Ask Codex to spawn an explorer or worker for bounded tasks.
+3. Re-run ocw bridge test --live any time you want to verify live model reachability.
+EOF
+  else
+    cat <<EOF
+OCW bridge setup complete.
+
+Next steps:
+1. Put your OpenCode Go key in .codex/ocw-bridge/opencode-go.env:
+   OPENCODE_GO_API_KEY=sk-...
+2. Start the bridge:
+   ocw bridge start --timeout $timeout
+3. Verify live model reachability:
+   ocw bridge test --live
+4. Start a new Codex session in this project so .codex/config.toml and .codex/agents/*.toml are loaded.
+5. Ask Codex to spawn an explorer or worker for bounded tasks.
+EOF
+  fi
+}
+
 bridge_command() {
   local subcommand="${1:-status}"
   shift || true
 
   case "$subcommand" in
+    setup) bridge_setup_command "$@" ;;
     install) bridge_install_command "$@" ;;
     start) bridge_start_command "$@" ;;
     stop) bridge_stop_command "$@" ;;
@@ -7381,6 +7483,7 @@ bridge_command() {
     -h|--help|help)
       cat <<'EOF'
 Usage:
+  ocw bridge setup [--force] [--start] [--live] [--host HOST] [--port PORT]
   ocw bridge install [--dir DIR] [--force] [--json]
   ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--timeout SECONDS] [--foreground]
   ocw bridge stop
@@ -9004,7 +9107,7 @@ _ocw()
       return 0
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents workers orchestration" -- "$cur") )
+      COMPREPLY=( $(compgen -W "setup install start stop status doctor test codex-config agents workers orchestration" -- "$cur") )
       return 0
       ;;
     models)
@@ -9086,7 +9189,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         keys) _values 'action' set add list use remove doctor path ;;
         setup) _values 'target' codex claude opencode copilot all ;;
-        bridge) _values 'action' install start stop status doctor test codex-config agents workers orchestration ;;
+        bridge) _values 'action' setup install start stop status doctor test codex-config agents workers orchestration ;;
         backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list profiles recommend configure bench ;;
         route) _values 'action' explain set doctor path ;;
@@ -9116,7 +9219,7 @@ complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from keys" -f -a "set add list use remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
-complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents workers orchestration"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "setup install start stop status doctor test codex-config agents workers orchestration"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"
