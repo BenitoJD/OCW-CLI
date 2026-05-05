@@ -213,10 +213,21 @@ Sync/list OpenCode Go models and promote benchmark winners into project routes:
 ```bash
 ocw models sync
 ocw models list
+ocw models list --metadata
+ocw models profiles
+ocw models recommend patch --profile balanced
+ocw models configure balanced
+ocw models configure quality --patch opencode-go/kimi-k2.6 --review opencode-go/glm-5.1
 ocw models bench --iterations 2 --promote review
 ocw route explain --json
+ocw route doctor --json
 ocw route set cheap opencode-go/qwen3.5-plus --reason "fast default"
 ```
+
+`ocw models configure` writes all five worker routes at once. Profiles are
+`max-savings`, `balanced`, `quality`, and `long-context`; every route can be
+overridden with `--cheap`, `--explore`, `--scan`, `--review`, or `--patch`.
+Run `ocw models sync` first to validate against the current OpenCode Go catalog.
 
 Run a model tournament when quality matters more than the cheapest single pass:
 
@@ -668,7 +679,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, delegate routing, verdict gates, savings estimates, backend adapter records, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, model profiles/configuration, route doctor checks, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, delegate routing, verdict gates, savings estimates, backend adapter records, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

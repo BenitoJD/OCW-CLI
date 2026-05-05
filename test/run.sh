@@ -713,6 +713,29 @@ EOF
   models_out="$TMP_ROOT/models-list.txt"
   "$OCW" models list --cache ".codex/models.json" > "$models_out"
   assert_contains "$models_out" "opencode-go/test-b"
+  "$OCW" models list --cache ".codex/models.json" --metadata --json > "$TMP_ROOT/models-metadata.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const m = j.models.find((item) => item.id === 'opencode-go/test-a'); if (!m || !m.roles.includes('custom')) process.exit(1)" "$TMP_ROOT/models-metadata.json"
+
+  "$OCW" models profiles --json > "$TMP_ROOT/models-profiles.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!j.profiles.some((item) => item.name === 'balanced')) process.exit(1)" "$TMP_ROOT/models-profiles.json"
+  "$OCW" models recommend patch --profile balanced --cache ".codex/models.json" --json > "$TMP_ROOT/models-recommend.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.model !== 'opencode-go/test-a') process.exit(1)" "$TMP_ROOT/models-recommend.json"
+  "$OCW" models configure balanced --cache ".codex/models.json" \
+    --cheap opencode-go/test-a \
+    --explore opencode-go/test-b \
+    --scan opencode-go/test-c \
+    --review opencode-go/test-a \
+    --patch opencode-go/test-b \
+    --dry-run --json > "$TMP_ROOT/models-configure-dry.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.dry_run !== true || j.routes.length !== 5) process.exit(1)" "$TMP_ROOT/models-configure-dry.json"
+  "$OCW" models configure balanced --cache ".codex/models.json" \
+    --cheap opencode-go/test-a \
+    --explore opencode-go/test-b \
+    --scan opencode-go/test-c \
+    --review opencode-go/test-a \
+    --patch opencode-go/test-b \
+    --reason "unit profile" --json > "$TMP_ROOT/models-configure.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.dry_run !== false || j.routes.length !== 5) process.exit(1)" "$TMP_ROOT/models-configure.json"
 
   "$OCW" route set cheap opencode-go/test-a --reason "unit route" >/dev/null
   route_json="$TMP_ROOT/route.json"
@@ -720,6 +743,8 @@ EOF
   node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$route_json"
   assert_contains "$route_json" '"source": "route"'
   assert_contains "$route_json" 'opencode-go/test-a'
+  "$OCW" route doctor --cache ".codex/models.json" --json > "$TMP_ROOT/route-doctor.json"
+  node -e "const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (j.ok !== true || !j.checks.every((check) => check.known === true)) process.exit(1)" "$TMP_ROOT/route-doctor.json"
 
   OCW_TEST_STAMP="world-route" run_ocw cheap "route file should drive this worker" >/dev/null
   assert_contains ".out/world-route-cheap/metadata.txt" "model=opencode-go/test-a"

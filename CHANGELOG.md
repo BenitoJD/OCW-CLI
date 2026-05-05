@@ -5,6 +5,7 @@ All notable changes to `ocw` are documented here.
 ## 0.8.0-alpha
 
 - Add `ocw models sync|list|bench` for OpenCode Go catalog caching, model listing, benchmark reuse, and route promotion.
+- Add `ocw models profiles|recommend|configure`, metadata-aware model listing, and `ocw route doctor` for project-level OpenCode Go model customization.
 - Add timeout and structured error-code hardening for model catalog sync and PR fetching.
 - Add `ocw quickstart`, `ocw setup`, and `ocw explain` for clearer first-run and artifact inspection UX.
 - Add `ocw route explain|set` so projects can persist smart model routes without editing config by hand.

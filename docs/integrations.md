@@ -24,7 +24,10 @@ Verify:
 ocw quickstart
 ocw doctor
 ocw doctor --deep
-ocw models
+ocw models sync
+ocw models list --metadata
+ocw models configure balanced
+ocw route doctor
 ```
 
 Bootstrap a project:
@@ -620,6 +623,17 @@ ocw stats --days 7 --models 10
 ```
 
 ## Benchmarks
+
+Use `ocw models sync` to cache the current OpenCode Go catalog, then configure
+worker routes with a profile or explicit model choices:
+
+```bash
+ocw models sync
+ocw models profiles
+ocw models configure balanced
+ocw models configure long-context --scan opencode-go/mimo-v2.5-pro
+ocw route doctor --strict
+```
 
 Use `ocw bench` to compare the OpenCode Go models available in your account:
 

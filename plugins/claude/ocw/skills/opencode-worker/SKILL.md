@@ -67,10 +67,21 @@ ocw apply latest
 
 ## Multi-Worker Helpers
 
+Use model customization commands when the user wants to choose OpenCode Go workers for a project:
+
+```bash
+ocw models sync
+ocw models list --metadata
+ocw models profiles
+ocw models configure balanced
+ocw route doctor
+```
+
 Use `ocw bench` when the user wants to compare available OpenCode Go models before choosing defaults:
 
 ```bash
 ocw bench --models opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash --iterations 2
+ocw models bench --iterations 2 --promote review
 ```
 
 Use `ocw batch` when several independent worker tasks can run at once:

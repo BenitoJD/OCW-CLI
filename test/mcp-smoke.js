@@ -199,6 +199,41 @@ function createClient(repo) {
     });
     assert.equal(modelsSync.structuredContent.status, 0);
     assert.match(modelsSync.structuredContent.stdout, /ocw\.models\.sync\.v1/);
+    const modelsMetadata = await client.request('tools/call', {
+      name: 'ocw_models',
+      arguments: { ...common, action: 'list', cache: '.codex/models.json', metadata: true },
+    });
+    assert.equal(modelsMetadata.structuredContent.status, 0);
+    assert.match(modelsMetadata.structuredContent.stdout, /configured_modes/);
+    const modelsProfiles = await client.request('tools/call', {
+      name: 'ocw_models',
+      arguments: { ...common, action: 'profiles' },
+    });
+    assert.equal(modelsProfiles.structuredContent.status, 0);
+    assert.match(modelsProfiles.structuredContent.stdout, /balanced/);
+    const modelsRecommend = await client.request('tools/call', {
+      name: 'ocw_models',
+      arguments: { ...common, action: 'recommend', mode: 'patch', profile: 'balanced', cache: '.codex/models.json' },
+    });
+    assert.equal(modelsRecommend.structuredContent.status, 0);
+    assert.match(modelsRecommend.structuredContent.stdout, /opencode-go\/mcp-a/);
+    const modelsConfigure = await client.request('tools/call', {
+      name: 'ocw_models',
+      arguments: {
+        ...common,
+        action: 'configure',
+        profile: 'balanced',
+        cache: '.codex/models.json',
+        cheap: 'opencode-go/mcp-a',
+        explore: 'opencode-go/mcp-b',
+        scan: 'opencode-go/mcp-a',
+        review: 'opencode-go/mcp-b',
+        patch: 'opencode-go/mcp-a',
+        reason: 'mcp smoke profile',
+      },
+    });
+    assert.equal(modelsConfigure.structuredContent.status, 0);
+    assert.match(modelsConfigure.structuredContent.stdout, /ocw\.models\.configure\.v1/);
 
     const routeSet = await client.request('tools/call', {
       name: 'ocw_route',
@@ -211,6 +246,12 @@ function createClient(repo) {
     });
     assert.equal(routeExplain.structuredContent.status, 0);
     assert.match(routeExplain.structuredContent.stdout, /opencode-go\/mcp-a/);
+    const routeDoctor = await client.request('tools/call', {
+      name: 'ocw_route',
+      arguments: { ...common, action: 'doctor', cache: '.codex/models.json' },
+    });
+    assert.equal(routeDoctor.structuredContent.status, 0);
+    assert.match(routeDoctor.structuredContent.stdout, /ocw\.route\.doctor\.v1/);
 
     const memoryAdd = await client.request('tools/call', {
       name: 'ocw_memory',
@@ -335,7 +376,7 @@ function createClient(repo) {
       arguments: { ...common, allow_dirty: true },
     });
     assert.equal(apply.structuredContent.status, 0);
-    assert.match(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8'), /mock edit from opencode-go\/kimi-k2\.6/);
+    assert.match(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8'), /mock edit from opencode-go\/mcp-a/);
 
     const stats = await client.request('tools/call', {
       name: 'ocw_stats',

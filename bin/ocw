@@ -5,6 +5,7 @@ VERSION="0.8.0-alpha"
 DEFAULT_OUTPUT_ROOT=".codex/opencode-workers"
 SKILL_NAME="opencode-worker"
 DEFAULT_BENCH_MODELS="opencode-go/qwen3.5-plus,opencode-go/deepseek-v4-flash,opencode-go/mimo-v2.5,opencode-go/deepseek-v4-pro,opencode-go/kimi-k2.6"
+DEFAULT_GO_MODELS_CSV="opencode-go/minimax-m2.7,opencode-go/minimax-m2.5,opencode-go/kimi-k2.6,opencode-go/kimi-k2.5,opencode-go/glm-5.1,opencode-go/glm-5,opencode-go/deepseek-v4-pro,opencode-go/deepseek-v4-flash,opencode-go/qwen3.6-plus,opencode-go/qwen3.5-plus,opencode-go/mimo-v2-pro,opencode-go/mimo-v2-omni,opencode-go/mimo-v2.5-pro,opencode-go/mimo-v2.5"
 DEFAULT_GO_MODELS_URL="https://opencode.ai/zen/go/v1/models"
 DEFAULT_NETWORK_TIMEOUT=20
 
@@ -54,9 +55,10 @@ Usage:
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
   ocw bridge install|start|stop|status|doctor|test|codex-config|agents [options]
   ocw models [opencode-models-options...]
-  ocw models sync|list|bench [options]
+  ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
   ocw route set MODE MODEL [--reason TEXT]
+  ocw route doctor [--cache FILE] [--json] [--strict]
   ocw tournament MODE [options] <task...>
   ocw hooks install [codex|claude|copilot|opencode|all] [--force]
   ocw memory add|search|update|export [options]
@@ -111,6 +113,7 @@ Default routing:
 
 Project config:
   .ocw.toml supports [models], [agents], and [defaults].
+  Project model routes are stored in .codex/ocw-routes.tsv.
 
 Batch file format:
   One task per line: mode|task
@@ -678,13 +681,188 @@ models_list_from_cache() {
     fi
   fi
 
-  csv_to_lines "$DEFAULT_BENCH_MODELS"
+  csv_to_lines "$DEFAULT_GO_MODELS_CSV"
 }
 
 models_cached_csv() {
   local cache
   cache="$(models_cache_path)"
   models_list_from_cache "$cache" | awk 'BEGIN { first = 1 } { if (!first) printf ","; printf "%s", $0; first = 0 } END { printf "\n" }'
+}
+
+model_short_id() {
+  local model="$1"
+  model="${model#opencode-go/}"
+  printf '%s\n' "$model"
+}
+
+model_display_name() {
+  case "$(model_short_id "$1")" in
+    minimax-m2.7) printf 'MiniMax M2.7\n' ;;
+    minimax-m2.5) printf 'MiniMax M2.5\n' ;;
+    kimi-k2.6) printf 'Kimi K2.6\n' ;;
+    kimi-k2.5) printf 'Kimi K2.5\n' ;;
+    glm-5.1) printf 'GLM-5.1\n' ;;
+    glm-5) printf 'GLM-5\n' ;;
+    deepseek-v4-pro) printf 'DeepSeek V4 Pro\n' ;;
+    deepseek-v4-flash) printf 'DeepSeek V4 Flash\n' ;;
+    qwen3.6-plus) printf 'Qwen3.6 Plus\n' ;;
+    qwen3.5-plus) printf 'Qwen3.5 Plus\n' ;;
+    mimo-v2-pro) printf 'MiMo-V2-Pro\n' ;;
+    mimo-v2-omni) printf 'MiMo-V2-Omni\n' ;;
+    mimo-v2.5-pro) printf 'MiMo-V2.5-Pro\n' ;;
+    mimo-v2.5) printf 'MiMo-V2.5\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+model_roles_csv() {
+  case "$(model_short_id "$1")" in
+    deepseek-v4-flash) printf 'cheap,fast,bulk\n' ;;
+    qwen3.5-plus) printf 'cheap,fast,high-quota\n' ;;
+    qwen3.6-plus) printf 'balanced,explore,patch\n' ;;
+    deepseek-v4-pro) printf 'review,planning,balanced\n' ;;
+    kimi-k2.6) printf 'patch,quality,coding\n' ;;
+    kimi-k2.5) printf 'patch,balanced,coding\n' ;;
+    glm-5.1) printf 'review,quality,planning\n' ;;
+    glm-5) printf 'review,balanced,planning\n' ;;
+    mimo-v2.5) printf 'scan,long-context,bulk\n' ;;
+    mimo-v2.5-pro) printf 'scan,long-context,quality\n' ;;
+    mimo-v2-pro) printf 'scan,long-context\n' ;;
+    mimo-v2-omni) printf 'scan,multimodal,long-context\n' ;;
+    minimax-m2.7) printf 'patch,balanced,coding\n' ;;
+    minimax-m2.5) printf 'cheap,fast,coding\n' ;;
+    *) printf 'custom\n' ;;
+  esac
+}
+
+json_string_array_from_csv() {
+  local csv="$1"
+  local first=1 item
+
+  printf '['
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    if [[ "$first" -eq 0 ]]; then
+      printf ', '
+    fi
+    json_string "$item"
+    first=0
+  done <<EOF
+$(csv_to_lines "$csv")
+EOF
+  printf ']'
+}
+
+model_configured_modes_csv() {
+  local model="$1"
+  local mode record configured first=1
+
+  for mode in cheap explore scan review patch; do
+    record="$(route_effective_model "$mode")"
+    configured="$(printf '%s\n' "$record" | awk -F '\t' '{ print $1 }')"
+    if [[ "$configured" == "$model" ]]; then
+      if [[ "$first" -eq 0 ]]; then
+        printf ','
+      fi
+      printf '%s' "$mode"
+      first=0
+    fi
+  done
+  printf '\n'
+}
+
+model_in_catalog() {
+  local cache="$1"
+  local model="$2"
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ "$candidate" == "$model" ]]; then
+      return 0
+    fi
+  done <<EOF
+$(models_list_from_cache "$cache")
+EOF
+  return 1
+}
+
+model_profile_names() {
+  printf '%s\n' max-savings balanced quality long-context
+}
+
+validate_model_profile() {
+  case "$1" in
+    max-savings|balanced|quality|long-context) ;;
+    *) die "unknown model profile: $1" ;;
+  esac
+}
+
+model_profile_description() {
+  case "$1" in
+    max-savings) printf 'lowest-cost routing for high-volume delegation\n' ;;
+    balanced) printf 'practical defaults across cheap, explore, scan, review, and patch work\n' ;;
+    quality) printf 'stronger workers for review and patch work while still using OpenCode Go\n' ;;
+    long-context) printf 'scan-heavy routing for large repositories and broad context tasks\n' ;;
+    *) die "unknown model profile: $1" ;;
+  esac
+}
+
+model_profile_candidates() {
+  local profile="$1"
+  local mode="$2"
+
+  validate_model_profile "$profile"
+  validate_worker_mode "$mode"
+
+  case "$profile:$mode" in
+    max-savings:cheap) printf 'opencode-go/deepseek-v4-flash\nopencode-go/qwen3.5-plus\nopencode-go/minimax-m2.5\n' ;;
+    max-savings:explore) printf 'opencode-go/deepseek-v4-flash\nopencode-go/qwen3.5-plus\nopencode-go/qwen3.6-plus\n' ;;
+    max-savings:scan) printf 'opencode-go/deepseek-v4-flash\nopencode-go/mimo-v2.5\nopencode-go/qwen3.5-plus\n' ;;
+    max-savings:review) printf 'opencode-go/qwen3.6-plus\nopencode-go/deepseek-v4-pro\nopencode-go/glm-5\n' ;;
+    max-savings:patch) printf 'opencode-go/qwen3.6-plus\nopencode-go/minimax-m2.7\nopencode-go/kimi-k2.5\n' ;;
+    balanced:cheap) printf 'opencode-go/deepseek-v4-flash\nopencode-go/qwen3.5-plus\nopencode-go/minimax-m2.5\n' ;;
+    balanced:explore) printf 'opencode-go/qwen3.6-plus\nopencode-go/deepseek-v4-flash\nopencode-go/minimax-m2.7\n' ;;
+    balanced:scan) printf 'opencode-go/mimo-v2.5\nopencode-go/mimo-v2-pro\nopencode-go/deepseek-v4-flash\n' ;;
+    balanced:review) printf 'opencode-go/deepseek-v4-pro\nopencode-go/glm-5\nopencode-go/qwen3.6-plus\n' ;;
+    balanced:patch) printf 'opencode-go/kimi-k2.6\nopencode-go/qwen3.6-plus\nopencode-go/minimax-m2.7\n' ;;
+    quality:cheap) printf 'opencode-go/qwen3.6-plus\nopencode-go/deepseek-v4-flash\nopencode-go/qwen3.5-plus\n' ;;
+    quality:explore) printf 'opencode-go/glm-5.1\nopencode-go/qwen3.6-plus\nopencode-go/deepseek-v4-pro\n' ;;
+    quality:scan) printf 'opencode-go/mimo-v2.5-pro\nopencode-go/mimo-v2.5\nopencode-go/mimo-v2-pro\n' ;;
+    quality:review) printf 'opencode-go/glm-5.1\nopencode-go/deepseek-v4-pro\nopencode-go/kimi-k2.6\n' ;;
+    quality:patch) printf 'opencode-go/kimi-k2.6\nopencode-go/glm-5.1\nopencode-go/qwen3.6-plus\n' ;;
+    long-context:cheap) printf 'opencode-go/deepseek-v4-flash\nopencode-go/qwen3.5-plus\nopencode-go/minimax-m2.5\n' ;;
+    long-context:explore) printf 'opencode-go/mimo-v2.5\nopencode-go/mimo-v2-pro\nopencode-go/qwen3.6-plus\n' ;;
+    long-context:scan) printf 'opencode-go/mimo-v2.5\nopencode-go/mimo-v2.5-pro\nopencode-go/mimo-v2-pro\n' ;;
+    long-context:review) printf 'opencode-go/deepseek-v4-pro\nopencode-go/glm-5.1\nopencode-go/qwen3.6-plus\n' ;;
+    long-context:patch) printf 'opencode-go/qwen3.6-plus\nopencode-go/kimi-k2.6\nopencode-go/minimax-m2.7\n' ;;
+  esac
+}
+
+model_profile_select() {
+  local profile="$1"
+  local mode="$2"
+  local cache="$3"
+  local candidate first="" fallback=""
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    [[ -n "$first" ]] || first="$candidate"
+    if model_in_catalog "$cache" "$candidate"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done <<EOF
+$(model_profile_candidates "$profile" "$mode")
+EOF
+
+  fallback="$(models_list_from_cache "$cache" | awk 'NF { print; exit }')"
+  if [[ -n "$fallback" ]]; then
+    printf '%s\n' "$fallback"
+  else
+    printf '%s\n' "$first"
+  fi
 }
 
 download_models_json() {
@@ -3845,7 +4023,7 @@ route_command() {
   local model=""
   local reason="manual"
   local json=0
-  local record route_model source detail first route_file
+  local record route_model source detail first route_file candidate cache strict=0 status=0 cache_exists=false ok
 
   case "$subcommand" in
     explain)
@@ -3940,6 +4118,85 @@ route_command() {
       route_set_record "$mode" "$model" "$reason"
       printf 'OCW route set: %s -> %s\n' "$mode" "$model"
       ;;
+    doctor)
+      cache="$(models_cache_path)"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --cache)
+            [[ $# -ge 2 ]] || die "--cache requires a value"
+            cache="$2"
+            shift 2
+            ;;
+          --json)
+            json=1
+            shift
+            ;;
+          --strict)
+            strict=1
+            shift
+            ;;
+          -h|--help)
+            printf 'Usage: ocw route doctor [--cache FILE] [--json] [--strict]\n'
+            return
+            ;;
+          *)
+            die "unknown route doctor option: $1"
+            ;;
+        esac
+      done
+
+      [[ -f "$cache" ]] && cache_exists=true
+      if [[ "$strict" -eq 1 && "$cache_exists" != true ]]; then
+        status=1
+      fi
+
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.route.doctor.v1",\n'
+        printf '  "cache": '
+        json_string "$cache"
+        printf ',\n  "cache_exists": %s,\n  "strict": %s,\n  "checks": [\n' "$cache_exists" "$([[ "$strict" -eq 1 ]] && printf true || printf false)"
+      else
+        printf 'OCW route doctor\n'
+        printf 'cache: %s (%s)\n' "$cache" "$([[ "$cache_exists" == true ]] && printf synced || printf "using built-in fallback catalog")"
+      fi
+
+      first=1
+      for candidate in cheap explore scan review patch; do
+        record="$(route_effective_model "$candidate")"
+        route_model="$(printf '%s\n' "$record" | awk -F '\t' '{ print $1 }')"
+        source="$(printf '%s\n' "$record" | awk -F '\t' '{ print $2 }')"
+        detail="$(printf '%s\n' "$record" | awk -F '\t' '{ print $3 }')"
+        if model_in_catalog "$cache" "$route_model"; then
+          ok=true
+        else
+          ok=false
+          status=1
+        fi
+        if [[ "$json" -eq 1 ]]; then
+          if [[ "$first" -eq 0 ]]; then
+            printf ',\n'
+          fi
+          printf '    { "mode": '
+          json_string "$candidate"
+          printf ', "model": '
+          json_string "$route_model"
+          printf ', "source": '
+          json_string "$source"
+          printf ', "detail": '
+          json_string "$detail"
+          printf ', "known": %s }' "$ok"
+          first=0
+        else
+          printf '[%s] %-7s %s (%s)\n' "$([[ "$ok" == true ]] && printf ok || printf missing)" "$candidate" "$route_model" "$source"
+        fi
+      done
+
+      if [[ "$json" -eq 1 ]]; then
+        printf '\n  ],\n  "ok": %s\n}\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
+      fi
+      return "$status"
+      ;;
     path)
       printf '%s\n' "$(routes_file_path)"
       ;;
@@ -3948,6 +4205,7 @@ route_command() {
 Usage:
   ocw route explain [MODE] [--json]
   ocw route set MODE MODEL [--reason TEXT]
+  ocw route doctor [--cache FILE] [--json] [--strict]
   ocw route path
 EOF
       ;;
@@ -3965,17 +4223,22 @@ models_command() {
   local timeout="${OCW_NETWORK_TIMEOUT:-$DEFAULT_NETWORK_TIMEOUT}"
   local out_file=""
   local cache="" json=0
+  local metadata=0 profile="balanced" dry_run=0 strict=1
+  local cheap_model="" explore_model="" scan_model="" review_model="" patch_model=""
   local models="" iterations=1 agent="plan" task="Reply with OCW_BENCH_OK and one concise sentence about the current repository."
   local promote_mode="" bench_status bench_dir best_model best_reason line first parsed_models
-  local tmp
+  local tmp mode selected roles configured profile_name reason status=0
 
   case "$subcommand" in
     -h|--help|help)
       cat <<'EOF'
 Usage:
   ocw models [opencode-models-options...]
-  ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]
-  ocw models list [--cache FILE] [--json]
+  ocw models sync [--provider opencode-go] [--url URL] [--out FILE] [--timeout SECONDS] [--json]
+  ocw models list [--cache FILE] [--metadata] [--json]
+  ocw models profiles [--json]
+  ocw models recommend MODE [--profile PROFILE] [--cache FILE] [--json]
+  ocw models configure [PROFILE] [--cheap MODEL] [--explore MODEL] [--scan MODEL] [--review MODEL] [--patch MODEL] [--dry-run] [--json]
   ocw models bench [--models CSV] [--iterations N] [--agent AGENT] [--promote MODE]
 EOF
       return
@@ -3997,6 +4260,14 @@ EOF
             url="$2"
             shift 2
             ;;
+          --provider)
+            [[ $# -ge 2 ]] || die "--provider requires a value"
+            case "$2" in
+              opencode-go) url="$DEFAULT_GO_MODELS_URL" ;;
+              *) die "unsupported models sync provider: $2" ;;
+            esac
+            shift 2
+            ;;
           --out)
             [[ $# -ge 2 ]] || die "--out requires a value"
             out_file="$2"
@@ -4012,7 +4283,7 @@ EOF
             shift
             ;;
           -h|--help)
-            printf 'Usage: ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]\n'
+            printf 'Usage: ocw models sync [--provider opencode-go] [--url URL] [--out FILE] [--timeout SECONDS] [--json]\n'
             return
             ;;
           *)
@@ -4072,12 +4343,16 @@ EOF
             cache="$2"
             shift 2
             ;;
+          --metadata|--roles)
+            metadata=1
+            shift
+            ;;
           --json)
             json=1
             shift
             ;;
           -h|--help)
-            printf 'Usage: ocw models list [--cache FILE] [--json]\n'
+            printf 'Usage: ocw models list [--cache FILE] [--metadata] [--json]\n'
             return
             ;;
           *)
@@ -4098,15 +4373,290 @@ EOF
           if [[ "$first" -eq 0 ]]; then
             printf ',\n'
           fi
-          printf '    '
-          json_string "$line"
+          if [[ "$metadata" -eq 1 ]]; then
+            roles="$(model_roles_csv "$line")"
+            configured="$(model_configured_modes_csv "$line")"
+            printf '    { "id": '
+            json_string "$line"
+            printf ', "model_id": '
+            json_string "$(model_short_id "$line")"
+            printf ', "name": '
+            json_string "$(model_display_name "$line")"
+            printf ', "roles": '
+            json_string_array_from_csv "$roles"
+            printf ', "configured_modes": '
+            json_string_array_from_csv "$configured"
+            printf ' }'
+          else
+            printf '    '
+            json_string "$line"
+          fi
           first=0
         done <<EOF
 $(models_list_from_cache "$cache")
 EOF
         printf '\n  ]\n}\n'
       else
-        models_list_from_cache "$cache"
+        if [[ "$metadata" -eq 1 ]]; then
+          printf 'model\troles\tconfigured_modes\n'
+          while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            roles="$(model_roles_csv "$line")"
+            configured="$(model_configured_modes_csv "$line")"
+            printf '%s\t%s\t%s\n' "$line" "$roles" "$configured"
+          done <<EOF
+$(models_list_from_cache "$cache")
+EOF
+        else
+          models_list_from_cache "$cache"
+        fi
+      fi
+      ;;
+    profiles)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --json) json=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw models profiles [--json]\n'
+            return
+            ;;
+          *)
+            die "unknown models profiles option: $1"
+            ;;
+        esac
+      done
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.models.profiles.v1",\n'
+        printf '  "profiles": [\n'
+        first=1
+        while IFS= read -r profile_name; do
+          [[ -n "$profile_name" ]] || continue
+          if [[ "$first" -eq 0 ]]; then
+            printf ',\n'
+          fi
+          printf '    { "name": '
+          json_string "$profile_name"
+          printf ', "description": '
+          json_string "$(model_profile_description "$profile_name")"
+          printf ', "routes": {'
+          for mode in cheap explore scan review patch; do
+            [[ "$mode" == "cheap" ]] || printf ','
+            printf ' "%s": ' "$mode"
+            json_string_array_from_csv "$(model_profile_candidates "$profile_name" "$mode" | awk 'BEGIN { first = 1 } { if (!first) printf ","; printf "%s", $0; first = 0 } END { printf "\n" }')"
+          done
+          printf ' } }'
+          first=0
+        done <<EOF
+$(model_profile_names)
+EOF
+        printf '\n  ]\n}\n'
+      else
+        printf 'profile\tdescription\n'
+        while IFS= read -r profile_name; do
+          [[ -n "$profile_name" ]] || continue
+          printf '%s\t%s\n' "$profile_name" "$(model_profile_description "$profile_name")"
+        done <<EOF
+$(model_profile_names)
+EOF
+      fi
+      ;;
+    recommend)
+      [[ $# -gt 0 ]] || die "Usage: ocw models recommend MODE [--profile PROFILE] [--cache FILE] [--json]"
+      mode="$1"
+      validate_worker_mode "$mode"
+      shift
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --profile)
+            [[ $# -ge 2 ]] || die "--profile requires a value"
+            profile="$2"
+            validate_model_profile "$profile"
+            shift 2
+            ;;
+          --cache)
+            [[ $# -ge 2 ]] || die "--cache requires a value"
+            cache="$2"
+            shift 2
+            ;;
+          --json)
+            json=1
+            shift
+            ;;
+          -h|--help)
+            printf 'Usage: ocw models recommend MODE [--profile PROFILE] [--cache FILE] [--json]\n'
+            return
+            ;;
+          *)
+            die "unknown models recommend option: $1"
+            ;;
+        esac
+      done
+      [[ -n "$cache" ]] || cache="$(models_cache_path)"
+      selected="$(model_profile_select "$profile" "$mode" "$cache")"
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.models.recommend.v1",\n'
+        printf '  "profile": '
+        json_string "$profile"
+        printf ',\n  "mode": '
+        json_string "$mode"
+        printf ',\n  "model": '
+        json_string "$selected"
+        printf ',\n  "roles": '
+        json_string_array_from_csv "$(model_roles_csv "$selected")"
+        printf ',\n  "candidates": '
+        json_string_array_from_csv "$(model_profile_candidates "$profile" "$mode" | awk 'BEGIN { first = 1 } { if (!first) printf ","; printf "%s", $0; first = 0 } END { printf "\n" }')"
+        printf '\n}\n'
+      else
+        printf '%s\n' "$selected"
+      fi
+      ;;
+    configure)
+      if [[ $# -gt 0 && "$1" != -* ]]; then
+        profile="$1"
+        validate_model_profile "$profile"
+        shift
+      fi
+      reason="profile $profile"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --profile)
+            [[ $# -ge 2 ]] || die "--profile requires a value"
+            profile="$2"
+            validate_model_profile "$profile"
+            reason="profile $profile"
+            shift 2
+            ;;
+          --cache)
+            [[ $# -ge 2 ]] || die "--cache requires a value"
+            cache="$2"
+            shift 2
+            ;;
+          --cheap)
+            [[ $# -ge 2 ]] || die "--cheap requires a model"
+            cheap_model="$2"
+            shift 2
+            ;;
+          --explore)
+            [[ $# -ge 2 ]] || die "--explore requires a model"
+            explore_model="$2"
+            shift 2
+            ;;
+          --scan)
+            [[ $# -ge 2 ]] || die "--scan requires a model"
+            scan_model="$2"
+            shift 2
+            ;;
+          --review)
+            [[ $# -ge 2 ]] || die "--review requires a model"
+            review_model="$2"
+            shift 2
+            ;;
+          --patch)
+            [[ $# -ge 2 ]] || die "--patch requires a model"
+            patch_model="$2"
+            shift 2
+            ;;
+          --reason)
+            [[ $# -ge 2 ]] || die "--reason requires a value"
+            reason="$2"
+            shift 2
+            ;;
+          --dry-run)
+            dry_run=1
+            shift
+            ;;
+          --allow-missing)
+            strict=0
+            shift
+            ;;
+          --json)
+            json=1
+            shift
+            ;;
+          -h|--help)
+            cat <<'EOF'
+Usage: ocw models configure [PROFILE] [--cheap MODEL] [--explore MODEL] [--scan MODEL] [--review MODEL] [--patch MODEL] [--dry-run] [--allow-missing] [--json]
+
+Profiles: max-savings, balanced, quality, long-context
+EOF
+            return
+            ;;
+          *)
+            die "unknown models configure option: $1"
+            ;;
+        esac
+      done
+      [[ -n "$cache" ]] || cache="$(models_cache_path)"
+      [[ -n "$cheap_model" ]] || cheap_model="$(model_profile_select "$profile" cheap "$cache")"
+      [[ -n "$explore_model" ]] || explore_model="$(model_profile_select "$profile" explore "$cache")"
+      [[ -n "$scan_model" ]] || scan_model="$(model_profile_select "$profile" scan "$cache")"
+      [[ -n "$review_model" ]] || review_model="$(model_profile_select "$profile" review "$cache")"
+      [[ -n "$patch_model" ]] || patch_model="$(model_profile_select "$profile" patch "$cache")"
+
+      for mode in cheap explore scan review patch; do
+        case "$mode" in
+          cheap) selected="$cheap_model" ;;
+          explore) selected="$explore_model" ;;
+          scan) selected="$scan_model" ;;
+          review) selected="$review_model" ;;
+          patch) selected="$patch_model" ;;
+        esac
+        if [[ "$strict" -eq 1 ]] && ! model_in_catalog "$cache" "$selected"; then
+          printf 'ocw: [unknown_model] %s route model is not in the OpenCode Go catalog: %s\n' "$mode" "$selected" >&2
+          status=1
+        fi
+      done
+      [[ "$status" -eq 0 ]] || return "$status"
+
+      if [[ "$dry_run" -ne 1 ]]; then
+        route_set_record cheap "$cheap_model" "$reason"
+        route_set_record explore "$explore_model" "$reason"
+        route_set_record scan "$scan_model" "$reason"
+        route_set_record review "$review_model" "$reason"
+        route_set_record patch "$patch_model" "$reason"
+      fi
+
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.models.configure.v1",\n'
+        printf '  "profile": '
+        json_string "$profile"
+        printf ',\n  "dry_run": %s,\n  "routes_file": ' "$([[ "$dry_run" -eq 1 ]] && printf true || printf false)"
+        json_string "$(routes_file_path)"
+        printf ',\n  "routes": [\n'
+        first=1
+        for mode in cheap explore scan review patch; do
+          case "$mode" in
+            cheap) selected="$cheap_model" ;;
+            explore) selected="$explore_model" ;;
+            scan) selected="$scan_model" ;;
+            review) selected="$review_model" ;;
+            patch) selected="$patch_model" ;;
+          esac
+          if [[ "$first" -eq 0 ]]; then
+            printf ',\n'
+          fi
+          printf '    { "mode": '
+          json_string "$mode"
+          printf ', "model": '
+          json_string "$selected"
+          printf ', "roles": '
+          json_string_array_from_csv "$(model_roles_csv "$selected")"
+          printf ' }'
+          first=0
+        done
+        printf '\n  ]\n}\n'
+      else
+        printf 'OCW model profile: %s\n' "$profile"
+        printf 'routes_file: %s\n' "$(routes_file_path)"
+        [[ "$dry_run" -eq 1 ]] && printf 'dry_run: true\n'
+        printf 'cheap   %s\n' "$cheap_model"
+        printf 'explore %s\n' "$explore_model"
+        printf 'scan    %s\n' "$scan_model"
+        printf 'review  %s\n' "$review_model"
+        printf 'patch   %s\n' "$patch_model"
       fi
       ;;
     bench)
@@ -4171,8 +4721,11 @@ EOF
       cat <<'EOF'
 Usage:
   ocw models [opencode-models-options...]
-  ocw models sync [--url URL] [--out FILE] [--timeout SECONDS] [--json]
-  ocw models list [--cache FILE] [--json]
+  ocw models sync [--provider opencode-go] [--url URL] [--out FILE] [--timeout SECONDS] [--json]
+  ocw models list [--cache FILE] [--metadata] [--json]
+  ocw models profiles [--json]
+  ocw models recommend MODE [--profile PROFILE] [--cache FILE] [--json]
+  ocw models configure [PROFILE] [--cheap MODEL] [--explore MODEL] [--scan MODEL] [--review MODEL] [--patch MODEL] [--dry-run] [--json]
   ocw models bench [--models CSV] [--iterations N] [--agent AGENT] [--promote MODE]
 EOF
       ;;
@@ -5185,6 +5738,8 @@ quickstart_command() {
     printf '    "ocw bridge doctor",\n'
     printf '    "ocw bridge agents sync",\n'
     printf '    "ocw models sync",\n'
+    printf '    "ocw models configure balanced",\n'
+    printf '    "ocw route doctor",\n'
     printf '    "ocw delegate \\"Summarize this repository\\"",\n'
     printf '    "ocw verdict latest",\n'
     printf '    "ocw savings"\n'
@@ -5205,10 +5760,14 @@ OCW quickstart
 3. Sync OpenCode Go model catalog:
    ocw models sync
 
-4. Delegate a bounded worker task:
+4. Configure project model routes:
+   ocw models configure balanced
+   ocw route doctor
+
+5. Delegate a bounded worker task:
    ocw delegate "Summarize this repository"
 
-5. Check the handoff:
+6. Check the handoff:
    ocw verdict latest
    ocw savings
 
@@ -7559,11 +8118,11 @@ _ocw()
       return 0
       ;;
     models)
-      COMPREPLY=( $(compgen -W "sync list bench" -- "$cur") )
+      COMPREPLY=( $(compgen -W "sync list profiles recommend configure bench" -- "$cur") )
       return 0
       ;;
     route)
-      COMPREPLY=( $(compgen -W "explain set path" -- "$cur") )
+      COMPREPLY=( $(compgen -W "explain set doctor path" -- "$cur") )
       return 0
       ;;
     hooks)
@@ -7638,8 +8197,8 @@ _ocw() {
         setup) _values 'target' codex claude opencode copilot all ;;
         bridge) _values 'action' install start stop status doctor test codex-config agents ;;
         backend) _values 'action' list add remove doctor path ;;
-        models) _values 'action' sync list bench ;;
-        route) _values 'action' explain set path ;;
+        models) _values 'action' sync list profiles recommend configure bench ;;
+        route) _values 'action' explain set doctor path ;;
         hooks) _values 'action' install ;;
         memory) _values 'action' add search update export ;;
         copilot) _values 'action' install doctor ;;
@@ -7667,8 +8226,8 @@ complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show va
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
 complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
-complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list bench"
-complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set path"
+complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
+complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from hooks" -f -a "install"
 complete -c ocw -n "__fish_seen_subcommand_from memory" -f -a "add search update export"
 complete -c ocw -n "__fish_seen_subcommand_from copilot" -f -a "install doctor"

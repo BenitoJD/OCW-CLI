@@ -183,13 +183,25 @@ const tools = [
   },
   {
     name: 'ocw_models',
-    description: 'List, sync, or benchmark OpenCode Go model routing data.',
+    description: 'List, sync, profile, configure, recommend, or benchmark OpenCode Go model routing data.',
     inputSchema: schema({
       ...commonProperties,
-      action: { type: 'string', enum: ['list', 'sync', 'bench'] },
+      action: { type: 'string', enum: ['list', 'sync', 'profiles', 'recommend', 'configure', 'bench'] },
       url: { type: 'string', description: 'Model catalog URL for sync. Supports file:// for local testing.' },
+      provider: { type: 'string', enum: ['opencode-go'], description: 'Provider catalog to sync. Defaults to opencode-go.' },
       out: { type: 'string', description: 'Cache file for sync output.' },
       cache: { type: 'string', description: 'Cache file for list input.' },
+      metadata: { type: 'boolean', description: 'For list, include roles and configured modes.' },
+      profile: { type: 'string', enum: ['max-savings', 'balanced', 'quality', 'long-context'], description: 'Model profile for recommend/configure.' },
+      mode: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'], description: 'Worker mode for recommend.' },
+      cheap: { type: 'string', description: 'Model override for configure cheap route.' },
+      explore: { type: 'string', description: 'Model override for configure explore route.' },
+      scan: { type: 'string', description: 'Model override for configure scan route.' },
+      review: { type: 'string', description: 'Model override for configure review route.' },
+      patch: { type: 'string', description: 'Model override for configure patch route.' },
+      reason: { type: 'string', description: 'Route reason stored by configure.' },
+      dry_run: { type: 'boolean', description: 'For configure, preview without writing routes.' },
+      allow_missing: { type: 'boolean', description: 'For configure, allow models not present in the catalog.' },
       models: { type: 'string', description: 'Comma-separated models for bench.' },
       iterations: { type: 'integer', minimum: 1, maximum: 100 },
       agent: { type: 'string', description: 'Agent for model bench.' },
@@ -204,10 +216,12 @@ const tools = [
     description: 'Explain or set project model routes used by OCW worker modes.',
     inputSchema: schema({
       ...commonProperties,
-      action: { type: 'string', enum: ['explain', 'set', 'path'] },
+      action: { type: 'string', enum: ['explain', 'set', 'doctor', 'path'] },
       mode: { type: 'string', enum: ['cheap', 'explore', 'scan', 'review', 'patch'] },
       model: { type: 'string', description: 'Model id for set.' },
       reason: { type: 'string', description: 'Reason stored with a route set.' },
+      cache: { type: 'string', description: 'Model cache file used by route doctor.' },
+      strict: { type: 'boolean', description: 'Route doctor fails if the synced cache is missing.' },
       json: { type: 'boolean', description: 'Return JSON for explain. Defaults to true.' },
     }, ['action']),
     annotations: { readOnlyHint: false },
@@ -717,19 +731,52 @@ function callTool(name, args) {
 
   if (name === 'ocw_models') {
     const action = assertString(input.action, 'action', true);
-    if (!['list', 'sync', 'bench'].includes(action)) {
+    if (!['list', 'sync', 'profiles', 'recommend', 'configure', 'bench'].includes(action)) {
       throw new Error(`unsupported models action: ${action}`);
     }
     const ocwArgs = ['models', action];
     if (action === 'sync') {
+      const provider = assertString(input.provider, 'provider');
       const url = assertString(input.url, 'url');
       const out = assertString(input.out, 'out');
+      if (provider) ocwArgs.push('--provider', provider);
       if (url) ocwArgs.push('--url', url);
       if (out) ocwArgs.push('--out', out);
       if (input.json !== false) ocwArgs.push('--json');
     } else if (action === 'list') {
       const cache = assertString(input.cache, 'cache');
       if (cache) ocwArgs.push('--cache', cache);
+      if (assertBoolean(input.metadata, 'metadata')) ocwArgs.push('--metadata');
+      if (input.json !== false) ocwArgs.push('--json');
+    } else if (action === 'profiles') {
+      if (input.json !== false) ocwArgs.push('--json');
+    } else if (action === 'recommend') {
+      const mode = assertString(input.mode, 'mode', true);
+      ocwArgs.push(mode);
+      const profile = assertString(input.profile, 'profile');
+      const cache = assertString(input.cache, 'cache');
+      if (profile) ocwArgs.push('--profile', profile);
+      if (cache) ocwArgs.push('--cache', cache);
+      if (input.json !== false) ocwArgs.push('--json');
+    } else if (action === 'configure') {
+      const profile = assertString(input.profile, 'profile');
+      if (profile) ocwArgs.push(profile);
+      const cache = assertString(input.cache, 'cache');
+      if (cache) ocwArgs.push('--cache', cache);
+      const fields = [
+        ['cheap', '--cheap'],
+        ['explore', '--explore'],
+        ['scan', '--scan'],
+        ['review', '--review'],
+        ['patch', '--patch'],
+        ['reason', '--reason'],
+      ];
+      for (const [key, flag] of fields) {
+        const value = assertString(input[key], key);
+        if (value) ocwArgs.push(flag, value);
+      }
+      if (assertBoolean(input.dry_run, 'dry_run')) ocwArgs.push('--dry-run');
+      if (assertBoolean(input.allow_missing, 'allow_missing')) ocwArgs.push('--allow-missing');
       if (input.json !== false) ocwArgs.push('--json');
     } else {
       const models = assertString(input.models, 'models');
@@ -753,7 +800,7 @@ function callTool(name, args) {
 
   if (name === 'ocw_route') {
     const action = assertString(input.action, 'action', true);
-    if (!['explain', 'set', 'path'].includes(action)) {
+    if (!['explain', 'set', 'doctor', 'path'].includes(action)) {
       throw new Error(`unsupported route action: ${action}`);
     }
     const ocwArgs = ['route', action];
@@ -766,6 +813,11 @@ function callTool(name, args) {
       if (reason) ocwArgs.push('--reason', reason);
     } else if (action === 'explain') {
       if (mode) ocwArgs.push(mode);
+      if (input.json !== false) ocwArgs.push('--json');
+    } else if (action === 'doctor') {
+      const cache = assertString(input.cache, 'cache');
+      if (cache) ocwArgs.push('--cache', cache);
+      if (assertBoolean(input.strict, 'strict')) ocwArgs.push('--strict');
       if (input.json !== false) ocwArgs.push('--json');
     }
     result = runOcw(ocwArgs, input);
