@@ -33,6 +33,10 @@ assert_not_dir() {
   [[ ! -d "$1" ]] || fail "unexpected dir: $1"
 }
 
+assert_absent() {
+  [[ ! -e "$1" ]] || fail "unexpected path: $1"
+}
+
 assert_contains() {
   local file="$1"
   local expected="$2"
@@ -1182,13 +1186,30 @@ test_bridge_command() {
   assert_file ".codex/ocw-bridge/bridge.py"
   assert_file ".codex/ocw-bridge/LICENSE"
   assert_file ".codex/ocw-bridge/opencode-go.env"
+  assert_file ".codex/ocw-bridge/bin/oss-scout"
+  assert_file ".codex/ocw-bridge/bin/oss-review"
+  assert_file ".codex/ocw-bridge/bin/oss-docs"
+  assert_file ".codex/ocw-bridge/bin/oss-patch"
+  assert_file ".codex/ocw-bridge/orchestration/AGENTS.md"
+  assert_file ".codex/ocw-bridge/orchestration/ROUTING.md"
+  bash -n ".codex/ocw-bridge/bin/oss-scout"
+  bash -n ".codex/ocw-bridge/bin/oss-review"
+  bash -n ".codex/ocw-bridge/bin/oss-docs"
+  bash -n ".codex/ocw-bridge/bin/oss-patch"
   printf 'LITELLM_MASTER_KEY=env-key\n' > ".codex/ocw-bridge/opencode-go.env"
   assert_contains ".gitignore" ".codex/ocw-bridge/"
+  assert_contains ".gitignore" ".codex/ocw-bridge-results/"
+  assert_contains ".gitignore" ".codex/ocw-bridge-worktrees/"
 
   "$OCW" bridge agents sync --force > "$TMP_ROOT/bridge-agents.txt"
   assert_file ".codex/agents/oss-deepseek-pro.toml"
   assert_file ".codex/agents/oss-kimi-rapid.toml"
   assert_file ".codex/agents/oss-flash-support.toml"
+
+  "$OCW" bridge orchestration sync --force > "$TMP_ROOT/bridge-orchestration.txt"
+  assert_file ".codex/ocw-bridge-orchestration/AGENTS.md"
+  assert_file ".codex/ocw-bridge-orchestration/ROUTING.md"
+  assert_contains ".codex/ocw-bridge-orchestration/ROUTING.md" "Command Matrix"
 
   "$OCW" bridge codex-config --write --project --force --port "$port" > "$TMP_ROOT/bridge-config-write.txt"
   assert_file ".codex/config.toml"
@@ -1238,6 +1259,110 @@ test_bridge_command() {
   assert_contains "$TMP_ROOT/bridge-env-start-again.txt" "already running"
   "$OCW" bridge stop > "$TMP_ROOT/bridge-env-stop.txt"
   assert_contains "$TMP_ROOT/bridge-env-stop.txt" "OCW bridge"
+}
+
+test_bridge_helper_scripts() {
+  local repo="$TMP_ROOT/bridge-helpers"
+  local mock_dir="$TMP_ROOT/bridge-helper-bin"
+  local helper_log="$TMP_ROOT/bridge-helper.log"
+  local report
+  make_repo "$repo"
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/opencode" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+
+model=""
+title=""
+dir=""
+auto=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    run|--pure)
+      shift
+      ;;
+    --model)
+      model="$2"
+      shift 2
+      ;;
+    --title)
+      title="$2"
+      shift 2
+      ;;
+    --dir)
+      dir="$2"
+      shift 2
+      ;;
+    --dangerously-skip-permissions)
+      auto=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+prompt="$(cat)"
+{
+  printf 'model=%s\n' "$model"
+  printf 'title=%s\n' "$title"
+  printf 'dir=%s\n' "$dir"
+  printf 'auto=%s\n' "$auto"
+  printf 'prompt=%s\n' "$prompt"
+} >> "${OCW_HELPER_LOG:?}"
+
+if [[ -n "$dir" ]]; then
+  cd "$dir"
+fi
+if [[ "$prompt" == *"OCW_HELPER_EDIT"* ]]; then
+  printf 'helper patch from %s\n' "$model" >> tracked.txt
+fi
+
+printf '# MOCK_BRIDGE_HELPER\n\nmodel=%s\ntitle=%s\nauto=%s\n' "$model" "$title" "$auto"
+MOCK
+  chmod +x "$mock_dir/opencode"
+
+  (
+    cd "$repo"
+    "$OCW" bridge install --force >/dev/null
+    printf 'OPENCODE_GO_API_KEY=helper-key\n' > ".codex/ocw-bridge/opencode-go.env"
+    mkdir -p .ai/tasks
+    printf 'Map the tracked file and report evidence.\n' > .ai/tasks/sample.md
+    printf 'Review tracked.txt for bugs.\n' > .ai/tasks/review.md
+    printf 'Draft docs for tracked.txt.\n' > .ai/tasks/docs.md
+    printf 'OCW_HELPER_EDIT: append a helper patch marker to tracked.txt.\n' > .ai/tasks/patch.md
+
+    OCW_HELPER_LOG="$helper_log" PATH="$mock_dir:$PATH" .codex/ocw-bridge/bin/oss-scout --task sample --auto-approve > "$TMP_ROOT/oss-scout.out"
+    report="$(cat "$TMP_ROOT/oss-scout.out")"
+    assert_file "$report"
+    assert_contains "$report" "MOCK_BRIDGE_HELPER"
+    assert_contains "$report" "title=oss-scout:sample"
+
+    OCW_HELPER_LOG="$helper_log" PATH="$mock_dir:$PATH" .codex/ocw-bridge/bin/oss-review --task .ai/tasks/review.md > "$TMP_ROOT/oss-review.out"
+    report="$(cat "$TMP_ROOT/oss-review.out")"
+    assert_file "$report"
+    assert_contains "$report" "title=oss-review:review"
+
+    OCW_HELPER_LOG="$helper_log" PATH="$mock_dir:$PATH" .codex/ocw-bridge/bin/oss-docs --task docs > "$TMP_ROOT/oss-docs.out"
+    report="$(cat "$TMP_ROOT/oss-docs.out")"
+    assert_file "$report"
+    assert_contains "$report" "opencode-go/deepseek-v4-flash"
+
+    OCW_HELPER_LOG="$helper_log" PATH="$mock_dir:$PATH" .codex/ocw-bridge/bin/oss-patch --task patch --auto-approve > "$TMP_ROOT/oss-patch.out"
+    assert_file ".codex/ocw-bridge-results/patch.patch.report.md"
+    assert_file ".codex/ocw-bridge-results/patch.patch.diff"
+    assert_file ".codex/ocw-bridge-results/patch.patch.status.txt"
+    assert_contains ".codex/ocw-bridge-results/patch.patch.diff" "helper patch from opencode-go/deepseek-v4-pro"
+    assert_absent ".codex/ocw-bridge-worktrees/patch"
+    assert_not_contains "tracked.txt" "helper patch from"
+  )
+
+  assert_contains "$helper_log" "title=oss-scout:sample"
+  assert_contains "$helper_log" "title=oss-review:review"
+  assert_contains "$helper_log" "title=oss-docs:docs"
+  assert_contains "$helper_log" "title=oss-patch:patch"
 }
 
 test_bridge_proxy_streaming() {
@@ -1394,6 +1519,7 @@ run_test "config support and release installer" test_config_support_and_release_
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
 run_test "bridge command" test_bridge_command
+run_test "bridge helper scripts" test_bridge_helper_scripts
 run_test "bridge proxy streaming" test_bridge_proxy_streaming
 run_test "bridge start-proxy script" test_bridge_start_proxy_script
 run_test "mcp server" test_mcp_server

@@ -12,6 +12,7 @@ included under Apache License 2.0 attribution in `bridge/opencode-bridge/`.
 ```bash
 ocw bridge install
 ocw bridge agents sync
+ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
 ocw bridge test
@@ -51,6 +52,7 @@ ocw bridge test --live
 ocw bridge codex-config
 ocw bridge codex-config --write --project
 ocw bridge agents sync
+ocw bridge orchestration sync
 ```
 
 ## Codex Config
@@ -91,12 +93,53 @@ deliberately avoids writing custom bridge keys into project TOML.
 They route through the `opencode_bridge` model provider and keep Codex as the
 orchestrator/final reviewer.
 
+## Orchestration Pack
+
+`ocw bridge orchestration sync` installs the bundled routing docs into
+`.codex/ocw-bridge-orchestration/`:
+
+- `AGENTS.md`
+- `ROUTING.md`
+
+These files capture the upstream bridge pattern in OCW terms: scout first for
+ambiguous work, docs/flash for mechanical summaries, review workers for second
+opinions, and isolated patch workers for bounded drafts. They explicitly keep
+the frontier agent responsible for final review, tests, and user-facing
+conclusions.
+
+## Helper Scripts
+
+`ocw bridge install` installs four generic helper scripts under
+`.codex/ocw-bridge/bin/`:
+
+```bash
+.codex/ocw-bridge/bin/oss-scout --task .ai/tasks/map-auth.md
+.codex/ocw-bridge/bin/oss-review --task .ai/tasks/review-risk.md
+.codex/ocw-bridge/bin/oss-docs --task .ai/tasks/docs.md
+.codex/ocw-bridge/bin/oss-patch --task .ai/tasks/fix-bug.md
+```
+
+Defaults:
+
+- Task ids resolve to `.ai/tasks/<id>.md`.
+- Reports are written to `.codex/ocw-bridge-results/`.
+- Patch drafts run in `.codex/ocw-bridge-worktrees/` and emit
+  `<task>.patch.diff` for inspection.
+- The default env file is `.codex/ocw-bridge/opencode-go.env`.
+
+The scripts accept `--tasks-dir`, `--results-dir`, `--dir`, `--env-file`,
+`--opencode-bin`, `--model`, and `--auto-approve`. `oss-patch` also accepts
+`--worktree-root` and `--keep-worktree`.
+
 ## Safety
 
 - Bind the bridge to localhost only.
 - `ocw bridge start` refuses non-loopback hosts unless
   `OCW_BRIDGE_ALLOW_NON_LOOPBACK=1` is set.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
+- Do not commit `.codex/ocw-bridge-results/` or
+  `.codex/ocw-bridge-worktrees/` unless your team deliberately archives worker
+  artifacts.
 - If you customize the local proxy key, put the same `LITELLM_MASTER_KEY`,
   `PROXY_API_KEY`, or `OCW_BRIDGE_KEY` value in the shell or env file used by
   `ocw bridge start`; `status`, `doctor`, and `test` read that env file too.

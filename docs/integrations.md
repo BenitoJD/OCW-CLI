@@ -43,7 +43,7 @@ ocw savings
 ocw bridge doctor
 ```
 
-This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, project MCP config, Claude worker subagent files, OCW Bridge runtime/config, bridge-backed Codex agent templates, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want the lighter project files.
+This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, project MCP config, Claude worker subagent files, OCW Bridge runtime/config, bridge-backed Codex agent templates, the bridge orchestration pack, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want the lighter project files.
 
 `ocw hooks install all` adds project-local helper files for Codex-style post-task audits, Claude Code hooks, GitHub Copilot custom instructions/prompts/agents, and OpenCode commands. Existing files are kept unless you pass `--force`.
 
@@ -63,6 +63,7 @@ a local Responses-compatible provider:
 ```bash
 ocw bridge install
 ocw bridge agents sync
+ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
 ocw bridge test
@@ -72,6 +73,12 @@ Set `OPENCODE_GO_API_KEY` in the shell or in `.codex/ocw-bridge/opencode-go.env`
 before live model calls. The generated `.codex/agents/*.toml` files use the
 `opencode_bridge` provider and keep the primary agent responsible for final
 review.
+
+`ocw bridge orchestration sync` writes the reusable routing pack to
+`.codex/ocw-bridge-orchestration/`. `ocw bridge install` also installs
+`.codex/ocw-bridge/bin/oss-scout`, `oss-review`, `oss-docs`, and `oss-patch`
+for teams that want the upstream-style task-file helper workflow without
+hardcoded repo paths.
 
 Install the reusable agent skill:
 

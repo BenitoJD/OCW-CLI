@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd -P)"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/oss-lib"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: oss-patch [--model MODEL] --task TASK [options]
+
+Options:
+  --task TASK             Task file path, or task id under --tasks-dir.
+  --tasks-dir DIR         Task directory for ids. Default: .ai/tasks.
+  --results-dir DIR       Report/patch directory. Default: .codex/ocw-bridge-results.
+  --worktree-root DIR     Worktree root. Default: .codex/ocw-bridge-worktrees.
+  --dir DIR               Repository root. Default: .
+  --env-file FILE         Env file. Default: .codex/ocw-bridge/opencode-go.env.
+  --opencode-bin BIN      OpenCode binary. Default: opencode.
+  --model MODEL           Default: opencode-go/deepseek-v4-pro.
+  --auto-approve          Pass OpenCode permission skip flag.
+  --keep-worktree         Keep the isolated worktree after the run.
+EOF
+}
+
+model="opencode-go/deepseek-v4-pro"
+task=""
+tasks_dir=".ai/tasks"
+results_dir=".codex/ocw-bridge-results"
+worktree_root=".codex/ocw-bridge-worktrees"
+repo_dir="."
+env_file=".codex/ocw-bridge/opencode-go.env"
+opencode_bin="${OCW_OPENCODE_BIN:-opencode}"
+auto_approve=0
+keep_worktree=0
+worktree_created=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) model="${2:-}"; shift 2 ;;
+    --task) task="${2:-}"; shift 2 ;;
+    --tasks-dir) tasks_dir="${2:-}"; shift 2 ;;
+    --results-dir) results_dir="${2:-}"; shift 2 ;;
+    --worktree-root) worktree_root="${2:-}"; shift 2 ;;
+    --dir) repo_dir="${2:-}"; shift 2 ;;
+    --env-file) env_file="${2:-}"; shift 2 ;;
+    --opencode-bin) opencode_bin="${2:-}"; shift 2 ;;
+    --auto-approve) auto_approve=1; shift ;;
+    --keep-worktree) keep_worktree=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+
+cleanup() {
+  if [[ "$keep_worktree" -ne 1 && "$worktree_created" -eq 1 && -n "${worktree:-}" ]]; then
+    git -C "$repo_dir" worktree remove --force "$worktree" >/dev/null 2>&1 || true
+  fi
+  [[ -n "${prompt:-}" ]] && rm -f "$prompt"
+}
+trap cleanup EXIT
+
+[[ -n "$model" ]] || oss_fail "--model cannot be empty"
+oss_require_command git
+oss_require_command "$opencode_bin"
+[[ -d "$repo_dir/.git" ]] || git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || oss_fail "--dir must be a git repository"
+
+task_path="$(oss_task_path "$task" "$tasks_dir")"
+task_id="$(oss_task_id "$task_path")"
+mkdir -p "$results_dir" "$worktree_root"
+report="$results_dir/${task_id}.patch.report.md"
+patch="$results_dir/${task_id}.patch.diff"
+status_file="$results_dir/${task_id}.patch.status.txt"
+worktree="$worktree_root/$task_id"
+prompt="$(mktemp "${TMPDIR:-/tmp}/ocw-oss-patch.XXXXXX")"
+
+[[ ! -e "$worktree" ]] || oss_fail "worktree path already exists: $worktree"
+oss_load_env_file "$env_file"
+
+git -C "$repo_dir" worktree add --detach "$worktree" HEAD >/dev/null
+worktree_created=1
+
+{
+  printf 'You are an external OSS patch worker for this repository.\n'
+  printf 'You are running in an isolated git worktree, not the main worktree.\n'
+  printf 'Make only the bounded change described in the task. Do not touch secrets or unrelated files.\n'
+  printf 'Run lightweight verification when practical. Return a concise markdown report with changed files, verification, confidence, caveats, and escalation recommendation.\n\n'
+  printf 'Task brief follows:\n\n'
+  sed -n '1,260p' "$task_path"
+} > "$prompt"
+
+oss_run_opencode "$opencode_bin" "$worktree" "$model" "oss-patch:$task_id" "$prompt" "$report" "$auto_approve"
+git -C "$worktree" add -N . >/dev/null
+git -C "$worktree" status --short > "$status_file"
+git -C "$worktree" diff --binary > "$patch"
+
+printf '%s\n%s\n%s\n' "$report" "$patch" "$status_file"

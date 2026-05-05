@@ -79,6 +79,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$prompt" && ! -t 0 ]]; then
+  prompt="$(cat)"
+fi
+
 {
   printf 'model=%s\n' "$model"
   printf 'agent=%s\n' "$agent"

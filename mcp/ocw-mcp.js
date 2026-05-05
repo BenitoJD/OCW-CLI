@@ -343,9 +343,9 @@ const tools = [
       ...commonProperties,
       action: {
         type: 'string',
-        enum: ['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync'],
+        enum: ['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync', 'orchestration-sync'],
       },
-      dir: { type: 'string', description: 'Target directory for install or agent sync.' },
+      dir: { type: 'string', description: 'Target directory for install, agent sync, or orchestration sync.' },
       host: { type: 'string', description: 'Bridge bind/check host. Defaults to 127.0.0.1.' },
       port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Bridge port. Defaults to 4000.' },
       key: { type: 'string', description: 'Local proxy key. Defaults to sk-local-codex-bridge.' },
@@ -999,17 +999,19 @@ function callTool(name, args) {
 
   if (name === 'ocw_bridge') {
     const action = assertString(input.action, 'action', true);
-    if (!['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync'].includes(action)) {
+    if (!['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync', 'orchestration-sync'].includes(action)) {
       throw new Error(`unsupported bridge action: ${action}`);
     }
     const ocwArgs = ['bridge'];
     if (action === 'agents-sync') {
       ocwArgs.push('agents', 'sync');
+    } else if (action === 'orchestration-sync') {
+      ocwArgs.push('orchestration', 'sync');
     } else {
       ocwArgs.push(action);
     }
     const dir = assertString(input.dir, 'dir');
-    if (dir && (action === 'install' || action === 'agents-sync')) ocwArgs.push('--dir', dir);
+    if (dir && (action === 'install' || action === 'agents-sync' || action === 'orchestration-sync')) ocwArgs.push('--dir', dir);
     const host = assertString(input.host, 'host');
     if (host && ['start', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--host', host);
     if (input.port !== undefined && input.port !== null) {
@@ -1026,7 +1028,7 @@ function callTool(name, args) {
       }
       if (action === 'start') ocwArgs.push('--timeout', String(input.timeout_seconds));
     }
-    if (assertBoolean(input.force, 'force') && ['install', 'codex-config', 'agents-sync'].includes(action)) ocwArgs.push('--force');
+    if (assertBoolean(input.force, 'force') && ['install', 'codex-config', 'agents-sync', 'orchestration-sync'].includes(action)) ocwArgs.push('--force');
     if (assertBoolean(input.write, 'write') && action === 'codex-config') ocwArgs.push('--write');
     if (assertBoolean(input.global, 'global') && action === 'codex-config') ocwArgs.push('--global');
     if (assertBoolean(input.project, 'project') && action === 'codex-config') ocwArgs.push('--project');

@@ -45,7 +45,7 @@ cp "$ROOT/scripts/gauntlet.sh" "$PKG_DIR/scripts/gauntlet.sh"
 cp "$ROOT/scripts/install-release.sh" "$PKG_DIR/scripts/install-release.sh"
 cp "$ROOT/scripts/homebrew-formula.sh" "$PKG_DIR/scripts/homebrew-formula.sh"
 
-chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/bridge/opencode-bridge/bridge.py" "$PKG_DIR/bridge/opencode-bridge/bin/start-proxy" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
+chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/bridge/opencode-bridge/bridge.py" "$PKG_DIR/bridge/opencode-bridge/bin/start-proxy" "$PKG_DIR/bridge/opencode-bridge/bin/oss-scout" "$PKG_DIR/bridge/opencode-bridge/bin/oss-review" "$PKG_DIR/bridge/opencode-bridge/bin/oss-docs" "$PKG_DIR/bridge/opencode-bridge/bin/oss-patch" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
 
 tar -czf "$DIST/$PKG.tar.gz" -C "$DIST" "$PKG"
 

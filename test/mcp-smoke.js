@@ -318,6 +318,19 @@ function createClient(repo) {
     assert.equal(backend.structuredContent.status, 0);
     assert.match(backend.structuredContent.stdout, /ocw\.backend\.v1/);
 
+    const bridgeInstall = await client.request('tools/call', {
+      name: 'ocw_bridge',
+      arguments: { ...common, action: 'install', force: true },
+    });
+    assert.equal(bridgeInstall.structuredContent.status, 0);
+    assert.ok(fs.existsSync(path.join(repo, '.codex/ocw-bridge/bin/oss-scout')));
+    const bridgeOrchestration = await client.request('tools/call', {
+      name: 'ocw_bridge',
+      arguments: { ...common, action: 'orchestration-sync', force: true },
+    });
+    assert.equal(bridgeOrchestration.structuredContent.status, 0);
+    assert.ok(fs.existsSync(path.join(repo, '.codex/ocw-bridge-orchestration/ROUTING.md')));
+
     const tournament = await client.request('tools/call', {
       name: 'ocw_tournament',
       arguments: {

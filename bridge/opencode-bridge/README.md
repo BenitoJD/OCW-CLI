@@ -6,6 +6,22 @@ Codex speaks the OpenAI Responses API. OpenCode Go exposes Chat Completions. Thi
 
 ## Quick start
 
+### OCW bundled usage
+
+When this runtime is installed through OCW, use the OCW commands instead of
+copying files by hand:
+
+```bash
+ocw bridge install
+ocw bridge agents sync
+ocw bridge orchestration sync
+ocw bridge codex-config --write --project
+ocw bridge start
+```
+
+OCW also installs generic helper scripts under `.codex/ocw-bridge/bin/`:
+`oss-scout`, `oss-review`, `oss-docs`, and `oss-patch`.
+
 ### Zero-config: just tell Codex
 
 Copy this entire prompt into Codex and it will clone, configure, and start everything automatically:

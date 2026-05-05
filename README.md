@@ -121,19 +121,34 @@ ocw agents sync
 This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents. `ocw agents sync|diff|doctor` is the easiest project-local integration flow when you want repeatable setup across many repos.
 
 `ocw setup all` also installs project MCP config, Claude worker subagent files,
-OCW Bridge runtime/config, and bridge-backed Codex agent templates.
+OCW Bridge runtime/config, bridge-backed Codex agent templates, and the bridge
+orchestration routing pack.
 
 Enable Codex-native OSS subagents through OCW Bridge:
 
 ```bash
 ocw bridge install
 ocw bridge agents sync
+ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
 ocw bridge test
 ```
 
 The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
+
+`ocw bridge install` also installs the upstream-style OSS helper scripts as
+OCW-native tools:
+
+```bash
+.codex/ocw-bridge/bin/oss-scout --task .ai/tasks/map-auth.md
+.codex/ocw-bridge/bin/oss-review --task .ai/tasks/review-risk.md
+.codex/ocw-bridge/bin/oss-docs --task .ai/tasks/docs.md
+.codex/ocw-bridge/bin/oss-patch --task .ai/tasks/fix-bug.md
+```
+
+Reports go to `.codex/ocw-bridge-results/`; patch drafts run in isolated
+`.codex/ocw-bridge-worktrees/` worktrees and produce patch files for review.
 
 Bridge runtime calls stream like native Responses calls: Codex receives
 `response.created` immediately, heartbeat comments while OpenCode Go is still

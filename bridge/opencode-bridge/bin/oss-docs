@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd -P)"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/oss-lib"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: oss-docs [--model MODEL] --task TASK [options]
+
+Options match oss-scout. Default model: opencode-go/deepseek-v4-flash.
+EOF
+}
+
+model="opencode-go/deepseek-v4-flash"
+task=""
+tasks_dir=".ai/tasks"
+results_dir=".codex/ocw-bridge-results"
+repo_dir="."
+env_file=".codex/ocw-bridge/opencode-go.env"
+opencode_bin="${OCW_OPENCODE_BIN:-opencode}"
+auto_approve=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) model="${2:-}"; shift 2 ;;
+    --task) task="${2:-}"; shift 2 ;;
+    --tasks-dir) tasks_dir="${2:-}"; shift 2 ;;
+    --results-dir) results_dir="${2:-}"; shift 2 ;;
+    --dir) repo_dir="${2:-}"; shift 2 ;;
+    --env-file) env_file="${2:-}"; shift 2 ;;
+    --opencode-bin) opencode_bin="${2:-}"; shift 2 ;;
+    --auto-approve) auto_approve=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+
+[[ -n "$model" ]] || oss_fail "--model cannot be empty"
+task_path="$(oss_task_path "$task" "$tasks_dir")"
+task_id="$(oss_task_id "$task_path")"
+mkdir -p "$results_dir"
+report="$results_dir/${task_id}.docs.report.md"
+prompt="$(mktemp "${TMPDIR:-/tmp}/ocw-oss-docs.XXXXXX")"
+trap 'rm -f "$prompt"' EXIT
+
+oss_require_command "$opencode_bin"
+oss_load_env_file "$env_file"
+
+{
+  printf 'You are an external OSS documentation worker for this repository.\n'
+  printf 'Default mode: report-only. Do not edit files unless the task explicitly assigns docs or markdown files.\n'
+  printf 'Return markdown with these headings exactly:\n'
+  printf '# OSS Docs Report\nModel\nTask\nFiles inspected\nDraft output\nConfidence\nCaveats\nVerification\nEscalation recommendation\n\n'
+  printf 'Task brief follows:\n\n'
+  sed -n '1,240p' "$task_path"
+} > "$prompt"
+
+oss_run_opencode "$opencode_bin" "$repo_dir" "$model" "oss-docs:$task_id" "$prompt" "$report" "$auto_approve"
+printf '%s\n' "$report"

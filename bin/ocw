@@ -54,7 +54,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
-  ocw bridge install|start|stop|status|doctor|test|codex-config|agents [options]
+  ocw bridge install|start|stop|status|doctor|test|codex-config|agents|orchestration [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
@@ -1777,7 +1777,9 @@ uninstall_remove_gitignore_entries() {
   }
 
   if ! grep -Fxq ".codex/opencode-workers/" "$gitignore" && \
-    ! grep -Fxq ".codex/opencode-worktrees/" "$gitignore"; then
+    ! grep -Fxq ".codex/opencode-worktrees/" "$gitignore" && \
+    ! grep -Fxq ".codex/ocw-bridge-results/" "$gitignore" && \
+    ! grep -Fxq ".codex/ocw-bridge-worktrees/" "$gitignore"; then
     printf 'Not installed gitignore entries: %s\n' "$gitignore"
     return
   fi
@@ -1788,7 +1790,7 @@ uninstall_remove_gitignore_entries() {
   fi
 
   tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-gitignore.XXXXXX")"
-  awk '$0 != ".codex/opencode-workers/" && $0 != ".codex/opencode-worktrees/" { print }' "$gitignore" > "$tmp"
+  awk '$0 != ".codex/opencode-workers/" && $0 != ".codex/opencode-worktrees/" && $0 != ".codex/ocw-bridge-results/" && $0 != ".codex/ocw-bridge-worktrees/" { print }' "$gitignore" > "$tmp"
   mv "$tmp" "$gitignore"
   printf 'Removed OCW gitignore entries: %s\n' "$gitignore"
 }
@@ -6412,10 +6414,12 @@ EOF
       if [[ "$force" -eq 1 ]]; then
         bridge_install_command --force
         bridge_agents_command sync --force
+        bridge_orchestration_command sync --force
         bridge_codex_config_command --write --project --force
       else
         bridge_install_command
         bridge_agents_command sync
+        bridge_orchestration_command sync
         bridge_codex_config_command --write --project
       fi
       ;;
@@ -6481,10 +6485,12 @@ EOF
       if [[ "$force" -eq 1 ]]; then
         bridge_install_command --force
         bridge_agents_command sync --force
+        bridge_orchestration_command sync --force
         bridge_codex_config_command --write --project --force
       else
         bridge_install_command
         bridge_agents_command sync
+        bridge_orchestration_command sync
         bridge_codex_config_command --write --project
       fi
       ;;
@@ -6700,6 +6706,8 @@ bridge_install_command() {
   local force=0
   local json=0
   local log_file=""
+  local installed_runtime=0
+  local file
 
   target_dir="$(bridge_project_dir)"
   source_dir="$(bridge_vendor_dir)"
@@ -6729,9 +6737,24 @@ bridge_install_command() {
   else
     mkdir -p "$target_dir"
     cp -R "$source_dir/." "$target_dir/"
-    chmod +x "$target_dir/bridge.py" "$target_dir/bin/start-proxy" 2>/dev/null || true
     printf 'Installed bridge runtime: %s\n' "$target_dir"
+    installed_runtime=1
   fi
+
+  if [[ "$installed_runtime" -eq 0 ]]; then
+    mkdir -p "$target_dir/bin" "$target_dir/orchestration"
+    for file in start-proxy oss-lib oss-scout oss-review oss-docs oss-patch; do
+      if [[ -f "$source_dir/bin/$file" ]]; then
+        copy_if_needed "$source_dir/bin/$file" "$target_dir/bin/$file" "bridge helper" "$force"
+      fi
+    done
+    for file in "$source_dir"/orchestration/*.md; do
+      [[ -f "$file" ]] || continue
+      copy_if_needed "$file" "$target_dir/orchestration/$(basename "$file")" "bridge orchestration doc" "$force"
+    done
+  fi
+
+  chmod +x "$target_dir/bridge.py" "$target_dir/bin/start-proxy" "$target_dir/bin/oss-scout" "$target_dir/bin/oss-review" "$target_dir/bin/oss-docs" "$target_dir/bin/oss-patch" 2>/dev/null || true
 
   if [[ ! -f "$target_dir/opencode-go.env" ]]; then
     cp "$source_dir/opencode-go.env.example" "$target_dir/opencode-go.env"
@@ -6739,6 +6762,8 @@ bridge_install_command() {
   fi
 
   ensure_gitignore_entry ".gitignore" "$target_dir/"
+  ensure_gitignore_entry ".gitignore" ".codex/ocw-bridge-results/"
+  ensure_gitignore_entry ".gitignore" ".codex/ocw-bridge-worktrees/"
   printf 'Updated gitignore: .gitignore\n'
 
   if [[ "$json" -eq 1 ]]; then
@@ -6794,6 +6819,48 @@ bridge_agents_command() {
     copy_if_needed "$file" "$target_dir/$(basename "$file")" "Codex bridge agent" "$force"
   done
   printf 'OCW bridge agents synced: %s\n' "$target_dir"
+}
+
+bridge_orchestration_command() {
+  local subcommand="${1:-sync}"
+  local target_dir=".codex/ocw-bridge-orchestration"
+  local source_dir
+  local force=0
+  local file
+
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) target_dir="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge orchestration sync [--dir DIR] [--force]\n'
+        return
+        ;;
+      *) die "unknown bridge orchestration option: $1" ;;
+    esac
+  done
+
+  case "$subcommand" in
+    sync) ;;
+    -h|--help|help)
+      printf 'Usage: ocw bridge orchestration sync [--dir DIR] [--force]\n'
+      return
+      ;;
+    *) die "unknown bridge orchestration command: $subcommand" ;;
+  esac
+
+  source_dir="$(bridge_runtime_dir)"
+  if [[ ! -d "$source_dir/orchestration" && -d "$(bridge_vendor_dir)/orchestration" ]]; then
+    source_dir="$(bridge_vendor_dir)"
+  fi
+  [[ -d "$source_dir/orchestration" ]] || die "bridge orchestration pack not found: $source_dir/orchestration"
+  mkdir -p "$target_dir"
+  for file in "$source_dir"/orchestration/*.md; do
+    [[ -f "$file" ]] || die "no bridge orchestration docs found: $source_dir/orchestration"
+    copy_if_needed "$file" "$target_dir/$(basename "$file")" "OCW bridge orchestration doc" "$force"
+  done
+  printf 'OCW bridge orchestration synced: %s\n' "$target_dir"
 }
 
 bridge_status_command() {
@@ -7170,6 +7237,7 @@ bridge_command() {
     test) bridge_test_command "$@" ;;
     codex-config) bridge_codex_config_command "$@" ;;
     agents) bridge_agents_command "$@" ;;
+    orchestration) bridge_orchestration_command "$@" ;;
     -h|--help|help)
       cat <<'EOF'
 Usage:
@@ -7181,6 +7249,7 @@ Usage:
   ocw bridge test [--live] [--json]
   ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force]
   ocw bridge agents sync [--dir DIR] [--force]
+  ocw bridge orchestration sync [--dir DIR] [--force]
 EOF
       ;;
     *) die "unknown bridge command: $subcommand" ;;
@@ -8794,7 +8863,7 @@ _ocw()
       return 0
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents" -- "$cur") )
+      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents orchestration" -- "$cur") )
       return 0
       ;;
     models)
@@ -8876,7 +8945,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         keys) _values 'action' set add list use remove doctor path ;;
         setup) _values 'target' codex claude opencode copilot all ;;
-        bridge) _values 'action' install start stop status doctor test codex-config agents ;;
+        bridge) _values 'action' install start stop status doctor test codex-config agents orchestration ;;
         backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list profiles recommend configure bench ;;
         route) _values 'action' explain set doctor path ;;
@@ -8906,7 +8975,7 @@ complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from keys" -f -a "set add list use remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
-complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents orchestration"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"

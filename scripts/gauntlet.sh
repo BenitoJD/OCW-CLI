@@ -114,6 +114,8 @@ install_from_package() {
   assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/bridge.py"
   assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/LICENSE"
   assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/agents/oss-kimi-rapid.toml"
+  assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/orchestration/ROUTING.md"
+  assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/bin/oss-scout"
   assert_file "$extract_dir/ocw-$VERSION/docs/assets/ocw-demo.svg"
   assert_file "$extract_dir/ocw-$VERSION/docs/site/index.html"
   OCW_INSTALL_DIR="$install_dir" "$extract_dir/ocw-$VERSION/install.sh" >/dev/null
@@ -341,8 +343,12 @@ MODELS
     "$ocw" bridge install --force --json > "$TMP_ROOT/bridge-install.json"
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/bridge-install.json"
     assert_file ".codex/ocw-bridge/bridge.py"
+    assert_file ".codex/ocw-bridge/bin/oss-scout"
+    assert_file ".codex/ocw-bridge/orchestration/ROUTING.md"
     "$ocw" bridge agents sync --force >/dev/null
     assert_file ".codex/agents/oss-kimi-rapid.toml"
+    "$ocw" bridge orchestration sync --force >/dev/null
+    assert_file ".codex/ocw-bridge-orchestration/AGENTS.md"
     "$ocw" bridge codex-config --write --project --force >/dev/null
     assert_contains ".codex/config.toml" "[model_providers.opencode_bridge]"
     "$ocw" bridge doctor --json > "$TMP_ROOT/bridge-doctor.json"
@@ -423,6 +429,7 @@ EVALS
     "$ocw" uninstall --project --force --yes >/dev/null
     assert_absent "AGENTS.md"
     assert_not_contains ".gitignore" ".codex/opencode-workers/"
+    assert_not_contains ".gitignore" ".codex/ocw-bridge-results/"
 
     OCW_INSTALL_DIR="$install_dir" "$ocw" uninstall --bin --skills --yes >/dev/null
     assert_absent "$install_dir/ocw"
