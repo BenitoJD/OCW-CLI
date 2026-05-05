@@ -125,6 +125,7 @@ function createClient(repo) {
       'ocw_mcp_audit',
       'ocw_memory',
       'ocw_models',
+      'ocw_keys',
       'ocw_report',
       'ocw_route',
       'ocw_run',
@@ -234,6 +235,18 @@ function createClient(repo) {
     });
     assert.equal(modelsConfigure.structuredContent.status, 0);
     assert.match(modelsConfigure.structuredContent.stdout, /ocw\.models\.configure\.v1/);
+    const keysList = await client.request('tools/call', {
+      name: 'ocw_keys',
+      arguments: { ...common, action: 'list' },
+    });
+    assert.equal(keysList.structuredContent.status, 0);
+    assert.match(keysList.structuredContent.stdout, /ocw\.keys\.v1/);
+    const keysDoctor = await client.request('tools/call', {
+      name: 'ocw_keys',
+      arguments: { ...common, action: 'doctor' },
+    });
+    assert.equal(keysDoctor.structuredContent.status, 0);
+    assert.match(keysDoctor.structuredContent.stdout, /ocw\.keys\.doctor\.v1/);
 
     const routeSet = await client.request('tools/call', {
       name: 'ocw_route',

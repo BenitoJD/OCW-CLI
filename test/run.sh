@@ -10,6 +10,7 @@ PASS=0
 FAIL=0
 
 trap 'rm -rf "$TMP_ROOT"' EXIT
+unset OCW_API_KEYS OCW_KEYS_FILE OCW_API_KEY_ENV OCW_KEY_ROTATION OCW_KEY_MAX_ATTEMPTS OPENCODE_API_KEY CUSTOM_OCW_KEY
 
 say() {
   printf '%s\n' "$*"
@@ -197,6 +198,53 @@ EOF
     "$OCW" cheap "env route" >/dev/null
 
   assert_contains ".configured/env-cheap/metadata.txt" "model=opencode-go/env-cheap"
+}
+
+test_key_management_and_rotation() {
+  local repo="$TMP_ROOT/keys"
+  local keys_json doctor_json status
+  make_repo "$repo"
+  cd "$repo"
+
+  "$OCW" keys set primary --value fail-key --env OPENCODE_API_KEY --activate >/dev/null
+  "$OCW" keys set backup --value good-key --env OPENCODE_API_KEY --force >/dev/null
+  "$OCW" keys list --json > "$TMP_ROOT/keys-list.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.keys.length !== 2 || data.keys[0].name !== 'primary' || data.keys[0].fingerprint.includes('fail-key')) process.exit(1)" "$TMP_ROOT/keys-list.json"
+
+  set +e
+  OCW_TEST_STAMP="keys-rotate" run_ocw cheap "key rotation" > "$TMP_ROOT/keys-rotate.out" 2> "$TMP_ROOT/keys-rotate.err"
+  status=$?
+  set -e
+  [[ "$status" -eq 0 ]] || fail "expected key rotation success, got $status"
+  assert_contains "$TMP_ROOT/keys-rotate.err" "trying next key"
+  assert_contains ".out/keys-rotate-cheap/metadata.txt" "key_name=backup"
+  assert_contains ".out/keys-rotate-cheap/metadata.txt" "key_attempts=2"
+  assert_contains ".out/keys-rotate-cheap/result.key-attempts.tsv" "primary"
+  assert_contains ".out/keys-rotate-cheap/result.key-attempts.tsv" "auth_or_quota"
+  assert_contains "mock.log" "api_key=fail-key"
+  assert_contains "mock.log" "api_key=good-key"
+  assert_not_contains ".out/keys-rotate-cheap/metadata.txt" "good-key"
+  assert_not_contains "$TMP_ROOT/keys-rotate.err" "fail-key"
+  assert_not_contains ".out/keys-rotate-cheap/result.attempt-1.jsonl" "fail-key"
+  assert_not_contains ".out/keys-rotate-cheap/stderr.attempt-1.txt" "fail-key"
+
+  "$OCW" keys set custom --value custom-good --env CUSTOM_OCW_KEY --activate --force >/dev/null
+  OCW_TEST_STAMP="keys-custom" run_ocw cheap "custom key env" >/dev/null
+  assert_contains ".out/keys-custom-cheap/metadata.txt" "key_name=custom"
+  assert_contains ".out/keys-custom-cheap/metadata.txt" "key_env=CUSTOM_OCW_KEY"
+  assert_contains "mock.log" "api_key=custom-good"
+
+  "$OCW" keys use backup >/dev/null
+  keys_json="$TMP_ROOT/keys-use.json"
+  "$OCW" keys list --json > "$keys_json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.keys[0].name !== 'backup' || !data.keys[0].active) process.exit(1)" "$keys_json"
+  "$OCW" keys remove primary >/dev/null
+  "$OCW" keys doctor --json > "$TMP_ROOT/keys-doctor.json"
+  doctor_json="$TMP_ROOT/keys-doctor.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.count !== 2 || data.severity !== 'ok') process.exit(1)" "$doctor_json"
+
+  OCW_API_KEYS="fail-env,good-env" OCW_TEST_STAMP="keys-env" run_ocw cheap "env key rotation" >/dev/null 2> "$TMP_ROOT/keys-env.err"
+  assert_contains ".out/keys-env-cheap/metadata.txt" "key_name=env-2"
 }
 
 test_diff_capture() {
@@ -1183,6 +1231,7 @@ run_test "help and doctor" test_help_and_doctor
 run_test "default routing" test_default_routing
 run_test "overrides and summary" test_overrides_and_summary
 run_test "config routing and attach" test_config_routing_and_attach
+run_test "key management and rotation" test_key_management_and_rotation
 run_test "diff capture" test_diff_capture
 run_test "exit code capture" test_exit_code_capture
 run_test "output collision" test_output_collision

@@ -237,6 +237,36 @@ ocw show latest --summary
 ocw audit latest
 ```
 
+## API Key Rotation
+
+Store multiple OpenCode API keys locally and let OCW fail over when a worker run
+hits an auth, quota, billing, balance, or rate-limit error:
+
+```bash
+ocw keys set primary --stdin --activate
+ocw keys set backup --stdin
+ocw keys list
+ocw keys doctor
+ocw keys use backup
+```
+
+By default, OCW stores keys in `.codex/ocw-keys.tsv` with `chmod 600` and passes
+the active key to OpenCode as `OPENCODE_API_KEY`. It never writes raw keys to
+worker metadata, reports, MCP output, or support bundles. Use `--env NAME`,
+`OCW_API_KEY_ENV`, or `[auth].key_env` when your OpenCode config references a
+different environment variable.
+
+For ephemeral CI or team runners, skip the key file and provide a comma-separated
+priority list:
+
+```bash
+OCW_API_KEYS="$OPEN_CODE_GO_KEY_1,$OPEN_CODE_GO_KEY_2" ocw cheap "Summarize the config flow"
+```
+
+If the first key is exhausted or invalid, OCW retries the same OpenCode command
+with the next key and records only key names/fingerprints in
+`result.key-attempts.tsv`.
+
 Run several worker tasks from one file:
 
 ```bash
@@ -642,6 +672,11 @@ patch = "opencode-go/kimi-k2.6"
 output_root = ".codex/opencode-workers"
 worktree = true
 # attach = "http://localhost:4096"
+
+[auth]
+key_env = "OPENCODE_API_KEY"
+keys_file = ".codex/ocw-keys.tsv"
+auto_rotate = true
 ```
 
 Precedence is: CLI flags, environment variables, `.ocw.toml`, built-in defaults.
@@ -666,6 +701,10 @@ OCW_REVIEW_MODEL     Override review default model
 OCW_PATCH_MODEL      Override patch default model
 OCW_SCAN_MODEL       Override scan default model
 OCW_CHEAP_MODEL      Override cheap default model
+OCW_API_KEYS         Comma-separated API keys to try before stored keys
+OCW_API_KEY_ENV      Env var name passed to opencode, default OPENCODE_API_KEY
+OCW_KEYS_FILE        Override stored API key registry path
+OCW_KEY_ROTATION     Set 0/false/off to disable automatic key failover
 OCW_BACKENDS_FILE    Override backend adapter registry path
 OCW_FRONTIER_COST_PER_UNIT  Override savings estimate frontier unit cost
 OCW_WORKER_COST_PER_UNIT    Override savings estimate worker unit cost
@@ -679,7 +718,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, model profiles/configuration, route doctor checks, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, delegate routing, verdict gates, savings estimates, backend adapter records, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, model profiles/configuration, route doctor checks, API key storage and failover, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, delegate routing, verdict gates, savings estimates, backend adapter records, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

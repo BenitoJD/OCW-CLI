@@ -9,6 +9,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - `ocw verdict latest` after a delegated run to keep final review explicit.
 - `ocw savings` to summarize worker usage and estimated frontier work avoided.
 - `ocw models sync && ocw models configure balanced && ocw route doctor` when setting project model routes.
+- `ocw keys doctor` to verify backup OpenCode API key rotation without exposing keys.
 - `ocw explore "<task>"` for normal repo exploration.
 - `ocw scan "<task>"` for broad or long-context scans.
 - `ocw review "<task>"` for a stronger second opinion on diffs or risky code.

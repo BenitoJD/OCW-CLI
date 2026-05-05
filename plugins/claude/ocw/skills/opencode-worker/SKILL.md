@@ -77,6 +77,15 @@ ocw models configure balanced
 ocw route doctor
 ```
 
+Use key rotation commands when OpenCode Go has multiple keys or a backup key:
+
+```bash
+ocw keys set primary --stdin --activate
+ocw keys set backup --stdin
+ocw keys list
+ocw keys doctor
+```
+
 Use `ocw bench` when the user wants to compare available OpenCode Go models before choosing defaults:
 
 ```bash
@@ -139,6 +148,7 @@ ocw_apply_check
 ocw_apply
 ocw_stats
 ocw_models
+ocw_keys
 ocw_route
 ocw_tournament
 ocw_memory

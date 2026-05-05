@@ -11,6 +11,7 @@ auto_approve=0
 files=()
 prompt=""
 log="${OCW_MOCK_LOG:-.ocw-mock.log}"
+api_key="${OPENCODE_API_KEY:-${CUSTOM_OCW_KEY:-}}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,8 +88,15 @@ done
   printf 'attach=%s\n' "$attach"
   printf 'auto_approve=%s\n' "$auto_approve"
   printf 'files=%s\n' "${files[*]:-}"
+  printf 'api_key=%s\n' "$api_key"
   printf 'prompt=%s\n' "$prompt"
 } >> "$log"
+
+if [[ "$api_key" == *"fail"* ]]; then
+  printf '{"type":"text","part":{"text":"MOCK_KEY_FAIL %s %s"}}\n' "$model" "$api_key"
+  printf 'mock opencode balance exhausted for api key %s\n' "$api_key" >&2
+  exit 42
+fi
 
 if [[ "$prompt" == *"OCW_MOCK_EDIT"* ]]; then
   printf 'mock edit from %s\n' "$model" >> tracked.txt

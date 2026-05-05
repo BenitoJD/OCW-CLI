@@ -212,6 +212,17 @@ const tools = [
     annotations: { readOnlyHint: false },
   },
   {
+    name: 'ocw_keys',
+    description: 'Inspect or switch OCW credential rotation state without exposing raw values.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: { type: 'string', enum: ['list', 'doctor', 'path', 'use', 'remove'] },
+      name: { type: 'string', description: 'Stored key name for use/remove.' },
+      json: { type: 'boolean', description: 'Return JSON for list/doctor. Defaults to true.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
     name: 'ocw_route',
     description: 'Explain or set project model routes used by OCW worker modes.',
     inputSchema: schema({
@@ -793,6 +804,23 @@ function callTool(name, args) {
         }
         ocwArgs.push('--iterations', String(input.iterations));
       }
+    }
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_keys') {
+    const action = assertString(input.action, 'action', true);
+    if (!['list', 'doctor', 'path', 'use', 'remove'].includes(action)) {
+      throw new Error(`unsupported keys action: ${action}`);
+    }
+    const ocwArgs = ['keys', action];
+    if (['use', 'remove'].includes(action)) {
+      const keyName = assertString(input.name, 'name', true);
+      ocwArgs.push(keyName);
+    }
+    if (['list', 'doctor'].includes(action) && input.json !== false) {
+      ocwArgs.push('--json');
     }
     result = runOcw(ocwArgs, input);
     return toolResponse(name, result);

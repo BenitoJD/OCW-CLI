@@ -28,6 +28,7 @@ ocw models sync
 ocw models list --metadata
 ocw models configure balanced
 ocw route doctor
+ocw keys doctor
 ```
 
 Bootstrap a project:
@@ -599,9 +600,30 @@ rm_worktree = false
 require_clean = false
 auto_approve = false
 # attach = "http://localhost:4096"
+
+[auth]
+key_env = "OPENCODE_API_KEY"
+keys_file = ".codex/ocw-keys.tsv"
+auto_rotate = true
 ```
 
 Precedence is: CLI flags, environment variables, `.ocw.toml`, built-in defaults.
+
+## API Keys
+
+Use `ocw keys` when a project or team has more than one OpenCode API key:
+
+```bash
+ocw keys set primary --stdin --activate
+ocw keys set backup --stdin
+ocw keys list
+ocw keys doctor
+```
+
+Worker runs try keys in priority order and automatically retry the same
+OpenCode command with the next key after auth, quota, balance, billing, or
+rate-limit failures. Raw keys stay in `.codex/ocw-keys.tsv` or `OCW_API_KEYS`;
+artifacts record only names and fingerprints.
 
 ## OpenCode Server
 

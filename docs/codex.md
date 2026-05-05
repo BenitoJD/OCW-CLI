@@ -39,6 +39,7 @@ Useful commands:
 ocw models sync
 ocw models configure balanced
 ocw route doctor
+ocw keys doctor
 ocw delegate "Map the auth flow"
 ocw verdict latest
 ocw savings
