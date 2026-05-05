@@ -54,7 +54,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
-  ocw bridge install|start|stop|status|doctor|test|codex-config|agents|orchestration [options]
+  ocw bridge install|start|stop|status|doctor|test|codex-config|agents|workers|orchestration [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
@@ -6329,6 +6329,8 @@ quickstart_command() {
     printf '    "ocw setup all",\n'
     printf '    "ocw bridge doctor",\n'
     printf '    "ocw bridge agents sync",\n'
+    printf '    "ocw bridge workers sync",\n'
+    printf '    "ocw bridge workers doctor",\n'
     printf '    "ocw models sync",\n'
     printf '    "ocw models configure balanced",\n'
     printf '    "ocw route doctor",\n'
@@ -6373,6 +6375,8 @@ Useful next commands:
    ocw backend doctor
    ocw bridge doctor
    ocw bridge codex-config
+   ocw bridge workers sync
+   ocw bridge workers doctor
    ocw mcp audit
    ocw policy init strict
 EOF
@@ -6843,6 +6847,119 @@ bridge_agents_command() {
   printf 'OCW bridge agents synced: %s\n' "$target_dir"
 }
 
+bridge_workers_command() {
+  local subcommand="${1:-sync}"
+  local target_dir=".codex/agents"
+  local source_dir
+  local force=0
+  local file target base
+  local status=0
+  local worker explorer overall provider_ok=false model_ok=false worker_ok=false explorer_ok=false
+
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) target_dir="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+Usage:
+  ocw bridge workers sync [--dir DIR] [--force]
+  ocw bridge workers diff [--dir DIR]
+  ocw bridge workers doctor [--dir DIR]
+EOF
+        return
+        ;;
+      *) die "unknown bridge workers option: $1" ;;
+    esac
+  done
+
+  case "$subcommand" in
+    sync|diff|doctor) ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw bridge workers sync [--dir DIR] [--force]
+  ocw bridge workers diff [--dir DIR]
+  ocw bridge workers doctor [--dir DIR]
+EOF
+      return
+      ;;
+    *) die "unknown bridge workers command: $subcommand" ;;
+  esac
+
+  source_dir="$(bridge_runtime_dir)"
+  if [[ ! -d "$source_dir/workers" && -d "$(bridge_vendor_dir)/workers" ]]; then
+    source_dir="$(bridge_vendor_dir)"
+  fi
+  [[ -d "$source_dir/workers" ]] || die "bridge worker overrides not found: $source_dir/workers"
+
+  case "$subcommand" in
+    sync)
+      mkdir -p "$target_dir"
+      for file in "$source_dir"/workers/*.toml; do
+        [[ -f "$file" ]] || die "no bridge worker override templates found: $source_dir/workers"
+        copy_if_needed "$file" "$target_dir/$(basename "$file")" "Codex built-in worker override" "$force"
+      done
+      printf 'OCW bridge worker overrides synced: %s\n' "$target_dir"
+      ;;
+    diff)
+      for file in "$source_dir"/workers/*.toml; do
+        [[ -f "$file" ]] || die "no bridge worker override templates found: $source_dir/workers"
+        base="$(basename "$file")"
+        target="$target_dir/$base"
+        if [[ ! -f "$target" ]]; then
+          printf 'missing: %s\n' "$target"
+          status=1
+        elif cmp -s "$file" "$target"; then
+          printf 'ok: %s\n' "$target"
+        else
+          printf 'changed: %s\n' "$target"
+          status=1
+        fi
+      done
+      return "$status"
+      ;;
+    doctor)
+      worker="$target_dir/worker.toml"
+      explorer="$target_dir/explorer.toml"
+      if [[ -f "$worker" ]] \
+        && grep -Fq 'name = "worker"' "$worker" \
+        && grep -Fq 'sandbox_mode = "workspace-write"' "$worker"; then
+        worker_ok=true
+      fi
+      if [[ -f "$explorer" ]] \
+        && grep -Fq 'name = "explorer"' "$explorer" \
+        && grep -Fq 'sandbox_mode = "read-only"' "$explorer"; then
+        explorer_ok=true
+      fi
+      if [[ -f "$worker" && -f "$explorer" ]] \
+        && grep -Fq 'model_provider = "opencode_bridge"' "$worker" \
+        && grep -Fq 'model_provider = "opencode_bridge"' "$explorer"; then
+        provider_ok=true
+      fi
+      if [[ -f "$worker" && -f "$explorer" ]] \
+        && grep -Eq 'model = "ocg-[^"]+"' "$worker" \
+        && grep -Eq 'model = "ocg-[^"]+"' "$explorer"; then
+        model_ok=true
+      fi
+      overall="ok"
+      if [[ "$worker_ok" != true || "$explorer_ok" != true || "$provider_ok" != true || "$model_ok" != true ]]; then
+        overall="fail"
+        status=1
+      fi
+      printf 'OCW bridge workers doctor: %s\n' "$overall"
+      printf 'agent dir: %s\n' "$target_dir"
+      printf 'source dir: %s\n' "$source_dir/workers"
+      printf 'worker override: %s\n' "$worker_ok"
+      printf 'explorer override: %s\n' "$explorer_ok"
+      printf 'opencode bridge provider: %s\n' "$provider_ok"
+      printf 'ocg models: %s\n' "$model_ok"
+      return "$status"
+      ;;
+  esac
+}
+
 bridge_orchestration_command() {
   local subcommand="${1:-sync}"
   local target_dir=".codex/ocw-bridge-orchestration"
@@ -7259,6 +7376,7 @@ bridge_command() {
     test) bridge_test_command "$@" ;;
     codex-config) bridge_codex_config_command "$@" ;;
     agents) bridge_agents_command "$@" ;;
+    workers) bridge_workers_command "$@" ;;
     orchestration) bridge_orchestration_command "$@" ;;
     -h|--help|help)
       cat <<'EOF'
@@ -7271,6 +7389,7 @@ Usage:
   ocw bridge test [--live] [--json]
   ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force]
   ocw bridge agents sync [--dir DIR] [--force]
+  ocw bridge workers sync|diff|doctor [--dir DIR] [--force]
   ocw bridge orchestration sync [--dir DIR] [--force]
 EOF
       ;;
@@ -8885,7 +9004,7 @@ _ocw()
       return 0
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents orchestration" -- "$cur") )
+      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents workers orchestration" -- "$cur") )
       return 0
       ;;
     models)
@@ -8967,7 +9086,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         keys) _values 'action' set add list use remove doctor path ;;
         setup) _values 'target' codex claude opencode copilot all ;;
-        bridge) _values 'action' install start stop status doctor test codex-config agents orchestration ;;
+        bridge) _values 'action' install start stop status doctor test codex-config agents workers orchestration ;;
         backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list profiles recommend configure bench ;;
         route) _values 'action' explain set doctor path ;;
@@ -8997,7 +9116,7 @@ complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from keys" -f -a "set add list use remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
-complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents orchestration"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents workers orchestration"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"

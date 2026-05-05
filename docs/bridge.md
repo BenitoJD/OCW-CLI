@@ -65,6 +65,8 @@ ocw bridge test --live
 ocw bridge codex-config
 ocw bridge codex-config --write --project
 ocw bridge agents sync
+ocw bridge workers sync
+ocw bridge workers doctor
 ocw bridge orchestration sync
 ```
 
@@ -105,6 +107,32 @@ deliberately avoids writing custom bridge keys into project TOML.
 
 They route through the `opencode_bridge` model provider and keep Codex as the
 orchestrator/final reviewer.
+
+## Built-In Worker Overrides
+
+`ocw bridge workers sync` installs opt-in Codex built-in overrides into
+`.codex/agents/`:
+
+- `worker.toml`: bounded implementation worker using `ocg-deepseek-v4-pro`
+- `explorer.toml`: read-only codebase explorer using `ocg-kimi-k2.6`
+
+Codex supports project-scoped custom agents in `.codex/agents/`; if a custom
+agent uses the same name as a built-in agent such as `worker` or `explorer`,
+the custom agent takes precedence. That means this command lets Codex spawn its
+normal worker/explorer roles while routing those spawned sessions through the
+local OpenCode Go bridge.
+
+This is intentionally separate from `ocw bridge agents sync` because it changes
+the behavior of built-in Codex roles:
+
+```bash
+ocw bridge workers sync --force
+ocw bridge workers doctor
+ocw bridge workers diff
+```
+
+After syncing, start a new Codex session in the project so the new agent files
+and provider config are loaded.
 
 ## Current Model Catalog
 

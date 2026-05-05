@@ -53,17 +53,19 @@ Steps:
 4. Run `ocw setup codex --force`.
 5. Run `ocw bridge install --force`.
 6. Run `ocw bridge agents sync --force`.
-7. Run `ocw bridge orchestration sync --force`.
-8. Ask me for my OpenCode Go API key.
-9. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
+7. Run `ocw bridge workers sync --force`.
+8. Run `ocw bridge orchestration sync --force`.
+9. Ask me for my OpenCode Go API key.
+10. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
    `OPENCODE_GO_API_KEY=<my key>`
-10. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
-11. Run `ocw bridge codex-config --write --project --force`.
-12. Start or restart the bridge with `ocw bridge start`.
-13. Run `ocw bridge test --live`.
-14. Show me the ready provider name, the ready `ocg-*` models, and two examples:
+11. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+12. Run `ocw bridge codex-config --write --project --force`.
+13. Start or restart the bridge with `ocw bridge start`.
+14. Run `ocw bridge test --live`.
+15. Run `ocw bridge workers doctor`.
+16. Show me the ready provider name, the ready `ocg-*` models, and two examples:
     - one command that uses OCW CLI workers
-    - one Codex command or instruction that uses the `opencode_bridge` provider
+    - one Codex instruction that asks Codex to spawn a worker or explorer backed by `opencode_bridge`
     - whether I need to restart Codex for the new provider config to be picked up
 
 Rules:
@@ -205,6 +207,7 @@ Enable Codex-native OSS subagents through OCW Bridge:
 ```bash
 ocw bridge install
 ocw bridge agents sync
+ocw bridge workers sync
 ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
@@ -212,6 +215,11 @@ ocw bridge test
 ```
 
 The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
+
+For the tightest Codex integration, `ocw bridge workers sync` installs
+project-local `worker` and `explorer` custom agents that override Codex's
+built-ins and route spawned worker sessions through `opencode_bridge`. This is
+opt-in because it intentionally changes Codex's worker/explorer model routing.
 
 `ocw bridge install` also installs the upstream-style OSS helper scripts as
 OCW-native tools:

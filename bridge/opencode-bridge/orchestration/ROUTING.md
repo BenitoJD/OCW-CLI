@@ -27,8 +27,10 @@ Need final merge, production safety, auth, data, schema, or release judgment?
 | Need | OCW CLI | Bridge Agent | Helper Script |
 |---|---|---|---|
 | Fast repo reconnaissance | `ocw explore` | `oss-kimi-rapid` | `bin/oss-scout` |
+| Codex built-in explorer override | n/a | `explorer` via `ocw bridge workers sync` | n/a |
 | Cheap scan or summary | `ocw scan` | `oss-flash-support` | `bin/oss-docs` |
 | Review findings | `ocw review` | `oss-kimi-rapid` | `bin/oss-review` |
+| Codex built-in worker override | n/a | `worker` via `ocw bridge workers sync` | n/a |
 | Isolated patch draft | `ocw --worktree patch` | `oss-deepseek-pro` | `bin/oss-patch` |
 | PR artifact | `ocw pr review 123` | n/a | n/a |
 | Structured agent tooling | `ocw mcp` | n/a | n/a |

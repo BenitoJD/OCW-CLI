@@ -1201,6 +1201,8 @@ test_bridge_command() {
   assert_file ".codex/ocw-bridge/bin/oss-patch"
   assert_file ".codex/ocw-bridge/orchestration/AGENTS.md"
   assert_file ".codex/ocw-bridge/orchestration/ROUTING.md"
+  assert_file ".codex/ocw-bridge/workers/worker.toml"
+  assert_file ".codex/ocw-bridge/workers/explorer.toml"
   bash -n ".codex/ocw-bridge/bin/oss-scout"
   bash -n ".codex/ocw-bridge/bin/oss-review"
   bash -n ".codex/ocw-bridge/bin/oss-docs"
@@ -1214,6 +1216,27 @@ test_bridge_command() {
   assert_file ".codex/agents/oss-deepseek-pro.toml"
   assert_file ".codex/agents/oss-kimi-rapid.toml"
   assert_file ".codex/agents/oss-flash-support.toml"
+
+  "$OCW" bridge workers sync --force > "$TMP_ROOT/bridge-workers.txt"
+  assert_file ".codex/agents/worker.toml"
+  assert_file ".codex/agents/explorer.toml"
+  assert_contains ".codex/agents/worker.toml" 'name = "worker"'
+  assert_contains ".codex/agents/worker.toml" 'model_provider = "opencode_bridge"'
+  assert_contains ".codex/agents/worker.toml" 'model = "ocg-deepseek-v4-pro"'
+  assert_contains ".codex/agents/worker.toml" 'sandbox_mode = "workspace-write"'
+  assert_contains ".codex/agents/explorer.toml" 'name = "explorer"'
+  assert_contains ".codex/agents/explorer.toml" 'model_provider = "opencode_bridge"'
+  assert_contains ".codex/agents/explorer.toml" 'model = "ocg-kimi-k2.6"'
+  assert_contains ".codex/agents/explorer.toml" 'sandbox_mode = "read-only"'
+
+  "$OCW" bridge workers diff > "$TMP_ROOT/bridge-workers-diff.txt"
+  assert_contains "$TMP_ROOT/bridge-workers-diff.txt" "ok: .codex/agents/worker.toml"
+  assert_contains "$TMP_ROOT/bridge-workers-diff.txt" "ok: .codex/agents/explorer.toml"
+
+  "$OCW" bridge workers doctor > "$TMP_ROOT/bridge-workers-doctor.txt"
+  assert_contains "$TMP_ROOT/bridge-workers-doctor.txt" "OCW bridge workers doctor: ok"
+  assert_contains "$TMP_ROOT/bridge-workers-doctor.txt" "worker override: true"
+  assert_contains "$TMP_ROOT/bridge-workers-doctor.txt" "explorer override: true"
 
   "$OCW" bridge orchestration sync --force > "$TMP_ROOT/bridge-orchestration.txt"
   assert_file ".codex/ocw-bridge-orchestration/AGENTS.md"

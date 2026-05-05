@@ -24,19 +24,21 @@ Steps:
 4. Run `ocw setup codex --force`.
 5. Run `ocw bridge install --force`.
 6. Run `ocw bridge agents sync --force`.
-7. Run `ocw bridge orchestration sync --force`.
-8. Ask me for my OpenCode Go API key.
-9. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
+7. Run `ocw bridge workers sync --force`.
+8. Run `ocw bridge orchestration sync --force`.
+9. Ask me for my OpenCode Go API key.
+10. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
    `OPENCODE_GO_API_KEY=<my key>`
-10. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
-11. Run `ocw bridge codex-config --write --project --force`.
-12. Start or restart the bridge with `ocw bridge start`.
-13. Run `ocw bridge test --live`.
-14. Show me the ready provider name, the ready `ocg-*` models, and two examples:
+11. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+12. Run `ocw bridge codex-config --write --project --force`.
+13. Start or restart the bridge with `ocw bridge start`.
+14. Run `ocw bridge test --live`.
+15. Run `ocw bridge workers doctor`.
+16. Show me the ready provider name, the ready `ocg-*` models, and two examples:
     - one command that uses OCW CLI workers
-    - one Codex command or instruction that uses the `opencode_bridge` provider
+    - one Codex instruction that asks Codex to spawn a worker or explorer backed by `opencode_bridge`
     - whether I need to restart Codex for the new provider config to be picked up
-15. If `opencode_bridge` is not visible in this Codex session, tell me to start a
+17. If `opencode_bridge` is not visible in this Codex session, tell me to start a
     new Codex session in this same project.
 
 Rules:
@@ -131,6 +133,7 @@ provider agents:
 ```bash
 ocw bridge install
 ocw bridge agents sync
+ocw bridge workers sync
 ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
@@ -144,3 +147,17 @@ For live model calls, set `OPENCODE_GO_API_KEY` in your shell or in:
 ```
 
 Then start a new Codex session so the provider and agent files are loaded.
+
+With `ocw bridge workers sync`, Codex's built-in `worker` and `explorer` roles
+are replaced by project-local custom agents that use the `opencode_bridge`
+provider. Ask Codex explicitly:
+
+```text
+Spawn an explorer to map the auth flow, then summarize the evidence before any edits.
+```
+
+or:
+
+```text
+Spawn a worker to draft the smallest test-only fix for this bug, then have Codex review the diff before applying it.
+```
