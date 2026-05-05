@@ -1164,6 +1164,11 @@ test_bridge_command() {
 
   "$OCW" bridge --help >/dev/null
 
+  if "$OCW" bridge status --port "bad-port" > "$TMP_ROOT/bridge-bad-port.out" 2> "$TMP_ROOT/bridge-bad-port.err"; then
+    fail "expected bridge status to reject invalid port"
+  fi
+  assert_contains "$TMP_ROOT/bridge-bad-port.err" "invalid bridge port"
+
   config="$TMP_ROOT/bridge-codex-config.toml"
   "$OCW" bridge codex-config --port "$port" > "$config"
   assert_contains "$config" "[model_providers.opencode_bridge]"
@@ -1210,6 +1215,9 @@ test_bridge_command() {
   status_json="$TMP_ROOT/bridge-status.json"
   "$OCW" bridge status --json --port "$port" --key "cli-key" > "$status_json"
   node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.running) process.exit(1)" "$status_json"
+  assert_contains "$status_json" '"health": true'
+  "$OCW" bridge status --json --port "$port" --key "env-key" > "$TMP_ROOT/bridge-status-wrong-key.json"
+  assert_contains "$TMP_ROOT/bridge-status-wrong-key.json" '"health": false'
 
   test_json="$TMP_ROOT/bridge-test-after-start.json"
   "$OCW" bridge test --json --port "$port" --key "cli-key" > "$test_json"
@@ -1221,6 +1229,136 @@ test_bridge_command() {
   stop_output="$TMP_ROOT/bridge-stop.txt"
   "$OCW" bridge stop > "$stop_output"
   assert_contains "$stop_output" "OCW bridge"
+
+  "$OCW" bridge start --port "$port" > "$TMP_ROOT/bridge-env-start.txt" 2> "$TMP_ROOT/bridge-env-start.err"
+  assert_contains "$TMP_ROOT/bridge-env-start.txt" "OCW bridge started"
+  "$OCW" bridge status --json --port "$port" > "$TMP_ROOT/bridge-env-status.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.running || !data.health) process.exit(1)" "$TMP_ROOT/bridge-env-status.json"
+  "$OCW" bridge start --port "$port" > "$TMP_ROOT/bridge-env-start-again.txt" 2> "$TMP_ROOT/bridge-env-start-again.err"
+  assert_contains "$TMP_ROOT/bridge-env-start-again.txt" "already running"
+  "$OCW" bridge stop > "$TMP_ROOT/bridge-env-stop.txt"
+  assert_contains "$TMP_ROOT/bridge-env-stop.txt" "OCW bridge"
+}
+
+test_bridge_proxy_streaming() {
+  local repo="$TMP_ROOT/bridge-streaming"
+  local port upstream_port mock_server upstream_pid
+  make_repo "$repo"
+  port=$((5400 + RANDOM % 500))
+  upstream_port=$((5900 + RANDOM % 500))
+  mock_server="$TMP_ROOT/bridge-mock-upstream.py"
+
+  cat > "$mock_server" <<'PY'
+import json
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _json(self, status, obj):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.rstrip("/").endswith("/models"):
+            self._json(200, {"data": [{"id": "deepseek-v4-pro"}, {"id": "kimi-k2.6"}]})
+            return
+        self._json(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        if not self.path.rstrip("/").endswith("/chat/completions"):
+            self._json(404, {"error": {"message": "not found"}})
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        time.sleep(2)
+        self._json(
+            200,
+            {
+                "id": "chatcmpl_mock",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": "mock bridge response for " + body.get("model", "unknown"),
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            },
+        )
+
+    def log_message(self, fmt, *args):
+        return
+
+
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+
+  (
+    cd "$repo"
+    "${OCW_PYTHON_BIN:-python3}" "$mock_server" "$upstream_port" > "$TMP_ROOT/bridge-mock-upstream.out" 2> "$TMP_ROOT/bridge-mock-upstream.err" &
+    upstream_pid=$!
+    trap 'kill "$upstream_pid" >/dev/null 2>&1 || true; wait "$upstream_pid" 2>/dev/null || true; "$OCW" bridge stop >/dev/null 2>&1 || true' EXIT
+    sleep 1
+
+    "$OCW" bridge install --force >/dev/null
+    printf 'LITELLM_MASTER_KEY=stream-key\nOPENCODE_GO_API_KEY=local-test-key\n' > ".codex/ocw-bridge/opencode-go.env"
+    UPSTREAM_BASE="http://127.0.0.1:$upstream_port/v1" \
+      SSE_UPSTREAM_HEARTBEAT_SECONDS=1 \
+      "$OCW" bridge start --port "$port" --timeout 10 > "$TMP_ROOT/bridge-stream-start.txt" 2> "$TMP_ROOT/bridge-stream-start.err"
+    assert_contains "$TMP_ROOT/bridge-stream-start.txt" "OCW bridge started"
+
+    "$OCW" bridge test --live --port "$port" > "$TMP_ROOT/bridge-stream-live.txt"
+    assert_contains "$TMP_ROOT/bridge-stream-live.txt" "live models: true"
+
+    curl -fsS -N --max-time 10 "http://127.0.0.1:$port/v1/responses" \
+      -H "Authorization: Bearer stream-key" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"ocg-deepseek-v4-pro","input":"hello","stream":true}' \
+      > "$TMP_ROOT/bridge-stream.sse"
+    assert_contains "$TMP_ROOT/bridge-stream.sse" "event: response.created"
+    assert_contains "$TMP_ROOT/bridge-stream.sse" ": upstream_wait"
+    assert_contains "$TMP_ROOT/bridge-stream.sse" "event: response.completed"
+    assert_contains "$TMP_ROOT/bridge-stream.sse" "mock bridge response"
+
+    curl -fsS --max-time 10 "http://127.0.0.1:$port/v1/responses" \
+      -H "Authorization: Bearer stream-key" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"ocg-kimi-k2.6","input":"hello","stream":false}' \
+      > "$TMP_ROOT/bridge-nonstream.json"
+    node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.status !== 'completed' || !JSON.stringify(data.output).includes('mock bridge response')) process.exit(1)" "$TMP_ROOT/bridge-nonstream.json"
+  )
+}
+
+test_bridge_start_proxy_script() {
+  local port pid code
+  port=$((7600 + RANDOM % 400))
+
+  OPENCODE_GO_API_KEY=placeholder PROXY_PORT="$port" "$ROOT/bridge/opencode-bridge/bin/start-proxy" > "$TMP_ROOT/bridge-start-proxy.out" 2> "$TMP_ROOT/bridge-start-proxy.err" &
+  pid=$!
+  (
+    trap 'kill "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true' EXIT
+    for _ in 1 2 3 4 5; do
+      code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null || true)"
+      if [[ "$code" != "000" ]]; then
+        [[ "$code" == "401" ]] || fail "expected unauthenticated start-proxy health to return 401, got $code"
+        curl -fsS --max-time 2 "http://127.0.0.1:$port/health" -H "Authorization: Bearer sk-local-codex-bridge" >/dev/null
+        exit 0
+      fi
+      sleep 1
+    done
+    sed -n '1,120p' "$TMP_ROOT/bridge-start-proxy.err" || true
+    fail "start-proxy did not become reachable"
+  )
 }
 
 test_mcp_server() {
@@ -1256,6 +1394,8 @@ run_test "config support and release installer" test_config_support_and_release_
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
 run_test "bridge command" test_bridge_command
+run_test "bridge proxy streaming" test_bridge_proxy_streaming
+run_test "bridge start-proxy script" test_bridge_start_proxy_script
 run_test "mcp server" test_mcp_server
 
 say "$PASS passed, $FAIL failed"

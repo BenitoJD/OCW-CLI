@@ -6543,6 +6543,55 @@ bridge_loopback_host_ok() {
   esac
 }
 
+bridge_validate_port() {
+  local port="$1"
+
+  [[ "$port" =~ ^[0-9]+$ ]] || die "invalid bridge port: $port (must be 1-65535)"
+  (( 10#$port >= 1 && 10#$port <= 65535 )) || die "invalid bridge port: $port (must be 1-65535)"
+}
+
+bridge_load_env_file() {
+  local env_file="$1"
+  local line key value
+
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      export\ *) line="${line#export }" ;;
+    esac
+    [[ "$line" == *=* ]] || die "invalid bridge env line in $env_file: $line"
+    key="$(trim "${line%%=*}")"
+    value="$(unquote "$(trim "${line#*=}")")"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid bridge env key in $env_file: $key"
+    case "$key" in
+      OPENCODE_GO_API_KEY|OCW_BRIDGE_KEY|PROXY_API_KEY|LITELLM_MASTER_KEY|UPSTREAM_BASE|UPSTREAM_TIMEOUT_SECONDS|UPSTREAM_RETRIES|MODEL_MAP_JSON|FALLBACK_MODEL_MAP_JSON|PROXY_STATE_DB|PROXY_STATE_TTL_SECONDS|PROXY_STATE_MAX_RESPONSES|PROXY_LOG_PATH|FORCE_SINGLE_TOOL_INSTRUCTIONS|STRIP_TOOLS|SSE_CHUNK_SIZE|SSE_UPSTREAM_HEARTBEAT_SECONDS|EXPOSE_EMPTY_REASONING_ITEM)
+        printf -v "$key" '%s' "$value"
+        export "$key"
+        ;;
+      *)
+        die "unsupported bridge env key in $env_file: $key"
+        ;;
+    esac
+  done < "$env_file"
+}
+
+bridge_health_status() {
+  local host="$1"
+  local port="$2"
+  local key="$3"
+  local status
+
+  have_command "$CURL_BIN" || {
+    printf '000\n'
+    return
+  }
+  status="$("$CURL_BIN" -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://$host:$port/health" \
+    -H "Authorization: Bearer $key" 2>/dev/null || true)"
+  printf '%s\n' "${status:-000}"
+}
+
 bridge_health_check() {
   local host="$1"
   local port="$2"
@@ -6551,6 +6600,27 @@ bridge_health_check() {
   have_command "$CURL_BIN" || return 2
   "$CURL_BIN" -fsS --max-time 2 "http://$host:$port/health" \
     -H "Authorization: Bearer $key" >/dev/null 2>&1
+}
+
+bridge_wait_for_health() {
+  local host="$1"
+  local port="$2"
+  local key="$3"
+  local pid="$4"
+  local timeout="$5"
+  local attempt=0
+
+  while (( attempt < timeout )); do
+    if bridge_health_check "$host" "$port" "$key"; then
+      return 0
+    fi
+    if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" >/dev/null 2>&1; then
+      return 2
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  return 1
 }
 
 bridge_pid_running() {
@@ -6731,11 +6801,13 @@ bridge_status_command() {
   local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
   local key
+  local key_arg=0
   local json=0
-  local state_dir pid_file log_file runtime_dir running=false pid=""
+  local state_dir env_file pid_file log_file runtime_dir running=false health_ok=false pid="" tracked_pid_running=false
 
   key="$(bridge_default_key)"
   state_dir="$(bridge_project_dir)"
+  env_file="$state_dir/opencode-go.env"
   pid_file="$state_dir/bridge.pid"
   log_file="$state_dir/bridge.log"
   runtime_dir="$(bridge_runtime_dir)"
@@ -6744,7 +6816,7 @@ bridge_status_command() {
     case "$1" in
       --host) host="$2"; shift 2 ;;
       --port) port="$2"; shift 2 ;;
-      --key) key="$2"; shift 2 ;;
+      --key) key="$2"; key_arg=1; shift 2 ;;
       --json) json=1; shift ;;
       -h|--help)
         printf 'Usage: ocw bridge status [--host HOST] [--port PORT] [--key KEY] [--json]\n'
@@ -6754,9 +6826,17 @@ bridge_status_command() {
     esac
   done
 
+  bridge_validate_port "$port"
+  bridge_load_env_file "$env_file"
+  if [[ "$key_arg" -ne 1 ]]; then
+    key="$(bridge_default_key)"
+  fi
+
   if bridge_health_check "$host" "$port" "$key"; then
+    health_ok=true
     running=true
   elif bridge_pid_running "$pid_file"; then
+    tracked_pid_running=true
     running=true
   fi
   [[ -f "$pid_file" ]] && pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -6765,6 +6845,8 @@ bridge_status_command() {
     printf '{\n'
     printf '  "schema_version": "ocw.bridge.status.v1",\n'
     printf '  "running": %s,\n' "$running"
+    printf '  "health": %s,\n' "$health_ok"
+    printf '  "tracked_pid_running": %s,\n' "$tracked_pid_running"
     printf '  "url": '
     json_string "http://$host:$port/v1"
     printf ',\n  "pid": '
@@ -6778,6 +6860,8 @@ bridge_status_command() {
   fi
 
   printf 'OCW bridge: %s\n' "$([[ "$running" == true ]] && printf 'running' || printf 'stopped')"
+  printf 'health: %s\n' "$health_ok"
+  printf 'tracked pid running: %s\n' "$tracked_pid_running"
   printf 'url: http://%s:%s/v1\n' "$host" "$port"
   [[ -n "$pid" ]] && printf 'pid: %s\n' "$pid"
   printf 'runtime: %s\n' "$runtime_dir/bridge.py"
@@ -6790,7 +6874,8 @@ bridge_start_command() {
   local key
   local key_arg=0
   local foreground=0
-  local state_dir runtime_dir env_file pid_file log_file pid
+  local timeout="${OCW_BRIDGE_START_TIMEOUT:-15}"
+  local state_dir runtime_dir env_file pid_file log_file pid health_status wait_status
 
   key="$(bridge_default_key)"
   state_dir="$(bridge_project_dir)"
@@ -6804,15 +6889,19 @@ bridge_start_command() {
       --host) host="$2"; shift 2 ;;
       --port) port="$2"; shift 2 ;;
       --key) key="$2"; key_arg=1; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
       --foreground) foreground=1; shift ;;
       -h|--help)
-        printf 'Usage: ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--foreground]\n'
+        printf 'Usage: ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--timeout SECONDS] [--foreground]\n'
         return
         ;;
       *) die "unknown bridge start option: $1" ;;
     esac
   done
 
+  bridge_validate_port "$port"
+  [[ "$timeout" =~ ^[0-9]+$ ]] || die "invalid bridge start timeout: $timeout"
+  (( 10#$timeout >= 1 && 10#$timeout <= 300 )) || die "invalid bridge start timeout: $timeout (must be 1-300)"
   [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
   require_command "$PYTHON_BIN"
   if ! bridge_loopback_host_ok "$host" && [[ "${OCW_BRIDGE_ALLOW_NON_LOOPBACK:-0}" != "1" ]]; then
@@ -6820,21 +6909,27 @@ bridge_start_command() {
   fi
 
   mkdir -p "$state_dir"
+  bridge_load_env_file "$env_file"
+  if [[ "$key_arg" -ne 1 ]]; then
+    key="$(bridge_default_key)"
+  fi
+
   if bridge_health_check "$host" "$port" "$key"; then
     printf 'OCW bridge already running: http://%s:%s/v1\n' "$host" "$port"
     return
   fi
 
-  if [[ -f "$env_file" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$env_file"
-    set +a
+  health_status="$(bridge_health_status "$host" "$port" "$key")"
+  if [[ "$health_status" == "401" || "$health_status" == "403" ]]; then
+    die "bridge is reachable on http://$host:$port/health but the proxy key was rejected; pass --key, set OCW_BRIDGE_KEY, or stop the existing bridge"
+  fi
+  if bridge_pid_running "$pid_file"; then
+    die "tracked bridge process is already running but health did not pass; inspect $(bridge_project_dir)/bridge.log or run 'ocw bridge stop'"
+  fi
+  if [[ -f "$pid_file" ]]; then
+    rm -f "$pid_file"
   fi
 
-  if [[ "$key_arg" -ne 1 ]]; then
-    key="$(bridge_default_key)"
-  fi
   export LITELLM_MASTER_KEY="$key"
   export PROXY_API_KEY="$key"
   export PROXY_HOST="$host"
@@ -6854,15 +6949,17 @@ bridge_start_command() {
   nohup "$PYTHON_BIN" "$runtime_dir/bridge.py" --host "$host" --port "$port" > "$log_file" 2>&1 &
   pid=$!
   printf '%s\n' "$pid" > "$pid_file"
-  sleep 1
-  if bridge_health_check "$host" "$port" "$key"; then
+  wait_status=0
+  bridge_wait_for_health "$host" "$port" "$key" "$pid" "$timeout" || wait_status=$?
+  if [[ "$wait_status" -eq 0 ]]; then
     printf 'OCW bridge started: http://%s:%s/v1\n' "$host" "$port"
     printf 'pid: %s\n' "$pid"
     printf 'log: %s\n' "$log_file"
+  elif [[ "$wait_status" -eq 2 ]]; then
+    rm -f "$pid_file"
+    die "OCW bridge exited before health check passed; see log: $log_file"
   else
-    printf 'OCW bridge start requested, but health check did not pass yet\n' >&2
-    printf 'pid: %s\n' "$pid"
-    printf 'log: %s\n' "$log_file"
+    die "OCW bridge did not pass health within ${timeout}s; see log: $log_file"
   fi
 }
 
@@ -6893,7 +6990,7 @@ bridge_doctor_command() {
   local json=0
   local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
-  local key runtime_dir state_dir env_file overall="ok" python_ok=false runtime_ok=false self_test_ok=false env_ok=false health_ok=false
+  local key key_arg=0 runtime_dir state_dir env_file overall="ok" python_ok=false runtime_ok=false self_test_ok=false env_ok=false health_ok=false
 
   key="$(bridge_default_key)"
   runtime_dir="$(bridge_runtime_dir)"
@@ -6904,7 +7001,7 @@ bridge_doctor_command() {
     case "$1" in
       --host) host="$2"; shift 2 ;;
       --port) port="$2"; shift 2 ;;
-      --key) key="$2"; shift 2 ;;
+      --key) key="$2"; key_arg=1; shift 2 ;;
       --json) json=1; shift ;;
       -h|--help)
         printf 'Usage: ocw bridge doctor [--host HOST] [--port PORT] [--key KEY] [--json]\n'
@@ -6914,6 +7011,11 @@ bridge_doctor_command() {
     esac
   done
 
+  bridge_validate_port "$port"
+  bridge_load_env_file "$env_file"
+  if [[ "$key_arg" -ne 1 ]]; then
+    key="$(bridge_default_key)"
+  fi
   have_command "$PYTHON_BIN" && python_ok=true
   [[ -f "$runtime_dir/bridge.py" ]] && runtime_ok=true
   [[ -f "$env_file" ]] && env_ok=true
@@ -6960,17 +7062,19 @@ bridge_test_command() {
   local json=0
   local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
-  local key runtime_dir self_test_ok=false health_ok=false live_ok=false overall="ok"
+  local key key_arg=0 runtime_dir state_dir env_file self_test_ok=false health_ok=false live_ok=false overall="ok"
 
   key="$(bridge_default_key)"
   runtime_dir="$(bridge_runtime_dir)"
+  state_dir="$(bridge_project_dir)"
+  env_file="$state_dir/opencode-go.env"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --live) live=1; shift ;;
       --host) host="$2"; shift 2 ;;
       --port) port="$2"; shift 2 ;;
-      --key) key="$2"; shift 2 ;;
+      --key) key="$2"; key_arg=1; shift 2 ;;
       --json) json=1; shift ;;
       -h|--help)
         printf 'Usage: ocw bridge test [--live] [--host HOST] [--port PORT] [--key KEY] [--json]\n'
@@ -6980,6 +7084,11 @@ bridge_test_command() {
     esac
   done
 
+  bridge_validate_port "$port"
+  bridge_load_env_file "$env_file"
+  if [[ "$key_arg" -ne 1 ]]; then
+    key="$(bridge_default_key)"
+  fi
   require_command "$PYTHON_BIN"
   [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
   if "$PYTHON_BIN" "$runtime_dir/bridge.py" --self-test >/dev/null; then
@@ -7041,6 +7150,7 @@ bridge_codex_config_command() {
     esac
   done
 
+  bridge_validate_port "$port"
   if [[ "$write" -eq 1 ]]; then
     bridge_write_codex_config "$target" "$force" "$port"
   else
@@ -7065,7 +7175,7 @@ bridge_command() {
       cat <<'EOF'
 Usage:
   ocw bridge install [--dir DIR] [--force] [--json]
-  ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--foreground]
+  ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--timeout SECONDS] [--foreground]
   ocw bridge stop
   ocw bridge status [--json]
   ocw bridge doctor [--json]

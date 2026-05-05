@@ -135,6 +135,11 @@ ocw bridge test
 
 The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
 
+Bridge runtime calls stream like native Responses calls: Codex receives
+`response.created` immediately, heartbeat comments while OpenCode Go is still
+working, and final output when the upstream model completes. This is important
+for long worker turns that would otherwise appear idle.
+
 Config helpers:
 
 ```bash

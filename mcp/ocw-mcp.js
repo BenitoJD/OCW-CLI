@@ -349,6 +349,7 @@ const tools = [
       host: { type: 'string', description: 'Bridge bind/check host. Defaults to 127.0.0.1.' },
       port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Bridge port. Defaults to 4000.' },
       key: { type: 'string', description: 'Local proxy key. Defaults to sk-local-codex-bridge.' },
+      timeout_seconds: { type: 'integer', minimum: 1, maximum: 300, description: 'Startup health timeout for start. Defaults to 15.' },
       force: { type: 'boolean', description: 'Overwrite OCW-owned bridge files/config where supported.' },
       write: { type: 'boolean', description: 'For codex-config, write instead of print.' },
       global: { type: 'boolean', description: 'For codex-config, target ~/.codex/config.toml.' },
@@ -1019,6 +1020,12 @@ function callTool(name, args) {
     }
     const key = assertString(input.key, 'key');
     if (key && ['start', 'status', 'doctor', 'test', 'codex-config'].includes(action)) ocwArgs.push('--key', key);
+    if (input.timeout_seconds !== undefined && input.timeout_seconds !== null) {
+      if (!Number.isInteger(input.timeout_seconds) || input.timeout_seconds < 1 || input.timeout_seconds > 300) {
+        throw new Error('timeout_seconds must be an integer between 1 and 300');
+      }
+      if (action === 'start') ocwArgs.push('--timeout', String(input.timeout_seconds));
+    }
     if (assertBoolean(input.force, 'force') && ['install', 'codex-config', 'agents-sync'].includes(action)) ocwArgs.push('--force');
     if (assertBoolean(input.write, 'write') && action === 'codex-config') ocwArgs.push('--write');
     if (assertBoolean(input.global, 'global') && action === 'codex-config') ocwArgs.push('--global');

@@ -30,7 +30,6 @@ Then:
 - [OpenCode Go](https://opencode.ai) with API key
 - [Codex CLI](https://developers.openai.com/codex/cli) or Codex Desktop
 - Python 3.13+ (stdlib only, no pip packages needed)
-- (Optional) [Proton Pass](https://proton.me/pass) CLI for vault-based credential management
 
 ### 2. Set your OpenCode Go key
 
@@ -46,11 +45,10 @@ Edit `opencode-go.env`:
 OPENCODE_GO_API_KEY=sk-...
 ```
 
-Three credential methods are supported (pick one):
+Two credential methods are supported (pick one):
 
 1. **Plain key in the env file** (recommended) — just paste your key
-2. **Proton Pass vault reference** — if you use `pass-cli`, use `pass://vault/item/OPENCODE_GO_API_KEY`
-3. **Shell environment** — export `OPENCODE_GO_API_KEY` before starting the proxy
+2. **Shell environment** — export `OPENCODE_GO_API_KEY` before starting the proxy
 
 ### 3. Start the proxy
 
@@ -76,13 +74,17 @@ Copy the provider config into your project's `.codex/config.toml`:
 
 ```toml
 [model_providers.opencode_bridge]
-name = "OpenCode Go Responses Proxy"
+name = "OpenCode Bridge"
 base_url = "http://127.0.0.1:4000/v1"
-env_key = "LITELLM_MASTER_KEY"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
-stream_idle_timeout_ms = 300000
+stream_idle_timeout_ms = 900000
+
+[model_providers.opencode_bridge.auth]
+command = "sh"
+args = ["-c", "printf %s \"${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}\""]
+timeout_ms = 1000
 ```
 
 Or merge `config.toml.example` from this repo into your existing config.
@@ -146,15 +148,17 @@ The bridge handles:
 | `OPENCODE_GO_API_KEY` | (required) | Your OpenCode Go API key |
 | `PROXY_API_KEY` | `LITELLM_MASTER_KEY` value | Key Codex sends to authenticate with the proxy |
 | `LITELLM_MASTER_KEY` | `sk-local-codex-bridge` | Auth key (shared name for Codex config compatibility) |
+| `PROXY_DISABLE_AUTH` | `0` | Set to `1` only for local debugging when you explicitly want no proxy auth |
 | `PROXY_PORT` | `4000` | Port the proxy listens on |
 | `PROXY_STATE_DB` | `/tmp/opencode_responses_proxy_state.sqlite3` | SQLite file for conversation state |
-| `FORCE_SINGLE_TOOL_INSTRUCTIONS` | `0` | Set to `1` to inject a guard discouraging parallel tool calls |
+| `FORCE_SINGLE_TOOL_INSTRUCTIONS` | `1` | Set to `0` to disable the guard discouraging parallel tool calls |
 | `FALLBACK_MODEL_MAP_JSON` | deepseek→kimi/flash fallback | JSON map of model→fallback chain |
 | `UPSTREAM_TIMEOUT_SECONDS` | `240` | Timeout for upstream API calls |
 | `UPSTREAM_RETRIES` | `2` | Number of retries on transient errors |
 | `MODEL_MAP_JSON` | (built-in) | Override model name mapping |
 | `PROXY_LOG_PATH` | (stderr) | Path for structured JSON log output |
 | `SSE_CHUNK_SIZE` | `256` | Characters per SSE text delta chunk |
+| `SSE_UPSTREAM_HEARTBEAT_SECONDS` | `5` | Seconds between SSE heartbeat comments while waiting on upstream |
 | `EXPOSE_EMPTY_REASONING_ITEM` | `1` | Include empty reasoning item in output for Codex compatibility |
 | `STRIP_TOOLS` | `0` | Set to `1` to strip ALL tools (force text-only responses) |
 

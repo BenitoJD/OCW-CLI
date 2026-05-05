@@ -32,11 +32,17 @@ Or edit the project-local env file:
 The health endpoint works without the upstream key, but `/v1/models` and
 `/v1/responses` require `OPENCODE_GO_API_KEY`.
 
+The bundled bridge runtime uses the upstream v3 streaming behavior: for
+streaming Responses requests it sends `response.created` immediately, emits
+heartbeat comments while the OpenCode Go call is pending, then sends the final
+Responses items. This keeps long-running OSS subagent calls from looking idle
+to Codex.
+
 ## Commands
 
 ```bash
 ocw bridge install
-ocw bridge start
+ocw bridge start [--timeout SECONDS]
 ocw bridge stop
 ocw bridge status --json
 ocw bridge doctor --json
@@ -91,6 +97,9 @@ orchestrator/final reviewer.
 - `ocw bridge start` refuses non-loopback hosts unless
   `OCW_BRIDGE_ALLOW_NON_LOOPBACK=1` is set.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
+- If you customize the local proxy key, put the same `LITELLM_MASTER_KEY`,
+  `PROXY_API_KEY`, or `OCW_BRIDGE_KEY` value in the shell or env file used by
+  `ocw bridge start`; `status`, `doctor`, and `test` read that env file too.
 - Treat bridge model output as draft labor.
 - Keep Codex responsible for final review, tests, and applying patches.
 - Use `ocw audit`, `ocw policy check`, and `ocw apply --check` for artifact

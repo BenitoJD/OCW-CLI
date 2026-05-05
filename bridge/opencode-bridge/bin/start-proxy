@@ -3,8 +3,7 @@
 #
 # Credential loading (checked in order):
 #   1. opencode-go.env file in the repo root
-#   2. pass-cli (if opencode-go.env contains a pass:// reference)
-#   3. OPENCODE_GO_API_KEY already in shell environment
+#   2. OPENCODE_GO_API_KEY already in shell environment
 #
 # Usage: bin/start-proxy
 set -euo pipefail
@@ -12,12 +11,62 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${SCRIPT_DIR}/opencode-go.env"
 
+trim() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s\n' "$value"
+}
+
+unquote() {
+    local value="$1"
+    case "$value" in
+        \"*\") value="${value#\"}"; value="${value%\"}" ;;
+        \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+load_env_file() {
+    local line key value
+
+    [ -f "$ENV_FILE" ] || return 0
+    echo "Using environment from opencode-go.env" >&2
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="$(trim "$line")"
+        [ -z "$line" ] && continue
+        case "$line" in
+            \#*) continue ;;
+            export\ *) line="${line#export }" ;;
+        esac
+        case "$line" in
+            *=*) ;;
+            *) echo "Invalid env line in ${ENV_FILE}: ${line}" >&2; exit 2 ;;
+        esac
+        key="$(trim "${line%%=*}")"
+        value="$(unquote "$(trim "${line#*=}")")"
+        case "$key" in
+            OPENCODE_GO_API_KEY|OCW_BRIDGE_KEY|PROXY_API_KEY|LITELLM_MASTER_KEY|UPSTREAM_BASE|UPSTREAM_TIMEOUT_SECONDS|UPSTREAM_RETRIES|MODEL_MAP_JSON|FALLBACK_MODEL_MAP_JSON|PROXY_STATE_DB|PROXY_STATE_TTL_SECONDS|PROXY_STATE_MAX_RESPONSES|PROXY_LOG_PATH|FORCE_SINGLE_TOOL_INSTRUCTIONS|STRIP_TOOLS|SSE_CHUNK_SIZE|SSE_UPSTREAM_HEARTBEAT_SECONDS|EXPOSE_EMPTY_REASONING_ITEM)
+                export "$key=$value"
+                ;;
+            *)
+                echo "Unsupported env key in ${ENV_FILE}: ${key}" >&2
+                exit 2
+                ;;
+        esac
+    done < "$ENV_FILE"
+}
+
+load_env_file
+
 export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-local-codex-bridge}"
 export PROXY_API_KEY="${PROXY_API_KEY:-$LITELLM_MASTER_KEY}"
 export PROXY_PORT="${PROXY_PORT:-4000}"
 export PROXY_STATE_DB="${PROXY_STATE_DB:-/tmp/opencode_responses_proxy_state.sqlite3}"
-export FORCE_SINGLE_TOOL_INSTRUCTIONS="${FORCE_SINGLE_TOOL_INSTRUCTIONS:-0}"
+export FORCE_SINGLE_TOOL_INSTRUCTIONS="${FORCE_SINGLE_TOOL_INSTRUCTIONS:-1}"
 export FALLBACK_MODEL_MAP_JSON="${FALLBACK_MODEL_MAP_JSON:-{\"deepseek-v4-pro\":[\"kimi-k2.6\",\"deepseek-v4-flash\"],\"kimi-k2.6\":[\"deepseek-v4-pro\"],\"deepseek-v4-flash\":[\"kimi-k2.6\"]}}"
+export SSE_UPSTREAM_HEARTBEAT_SECONDS="${SSE_UPSTREAM_HEARTBEAT_SECONDS:-5}"
+export UPSTREAM_TIMEOUT_SECONDS="${UPSTREAM_TIMEOUT_SECONDS:-240}"
 
 # Already running? Skip.
 if curl -s --max-time 2 "http://127.0.0.1:${PROXY_PORT}/health" \
@@ -27,14 +76,4 @@ if curl -s --max-time 2 "http://127.0.0.1:${PROXY_PORT}/health" \
 fi
 
 echo "Starting OpenCode Bridge on port ${PROXY_PORT}..." >&2
-
-if [ -f "$ENV_FILE" ] && grep -q '^OPENCODE_GO_API_KEY=' "$ENV_FILE" 2>/dev/null; then
-    echo "Using credentials from opencode-go.env" >&2
-    set -a
-    source "$ENV_FILE"
-    set +a
-    exec python3 "${SCRIPT_DIR}/bridge.py"
-else
-    echo "Using OPENCODE_GO_API_KEY from environment" >&2
-    exec python3 "${SCRIPT_DIR}/bridge.py"
-fi
+exec python3 "${SCRIPT_DIR}/bridge.py"
