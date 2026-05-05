@@ -9,16 +9,19 @@ included under Apache License 2.0 attribution in `bridge/opencode-bridge/`.
 
 ## Quick Start
 
+Set your OpenCode Go API key before the live bridge test, either in your shell
+or in `.codex/ocw-bridge/opencode-go.env`.
+
 ```bash
 ocw bridge install
 ocw bridge agents sync
 ocw bridge orchestration sync
 ocw bridge codex-config --write --project
 ocw bridge start
-ocw bridge test
+ocw bridge test --live
 ```
 
-Set your OpenCode Go API key before live model calls:
+Shell example:
 
 ```bash
 export OPENCODE_GO_API_KEY=sk-...

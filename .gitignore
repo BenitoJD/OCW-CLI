@@ -3,6 +3,8 @@ dist/
 .out/
 .codex/opencode-workers/
 .codex/opencode-worktrees/
+.codex/ocw-keys.tsv
+.codex/ocw-bridge/
 .codex/ocw-bridge-results/
 .codex/ocw-bridge-worktrees/
 .ocw-test/

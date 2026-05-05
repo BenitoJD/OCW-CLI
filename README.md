@@ -57,7 +57,7 @@ Steps:
 8. Ask me for my OpenCode Go API key.
 9. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
    `OPENCODE_GO_API_KEY=<my key>`
-10. Confirm `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+10. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
 11. Run `ocw bridge codex-config --write --project --force`.
 12. Start or restart the bridge with `ocw bridge start`.
 13. Run `ocw bridge test --live`.
@@ -108,6 +108,12 @@ curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/insta
 ```
 
 The release installer downloads the tarball, verifies its SHA-256 file, verifies GitHub artifact attestations when `gh` is installed, and runs the packaged installer.
+
+Inspect the installer before running it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BenitoJD/OCW-CLI/main/scripts/install-release.sh | less
+```
 
 Require attestation verification:
 
@@ -345,6 +351,14 @@ the active key to OpenCode as `OPENCODE_API_KEY`. It never writes raw keys to
 worker metadata, reports, MCP output, or support bundles. Use `--env NAME`,
 `OCW_API_KEY_ENV`, or `[auth].key_env` when your OpenCode config references a
 different environment variable.
+
+OCW Bridge uses a separate project-local env file,
+`.codex/ocw-bridge/opencode-go.env`, and reads `OPENCODE_GO_API_KEY` for
+Codex-native bridge model calls. Use `.codex/ocw-keys.tsv` for CLI worker key
+rotation, and `.codex/ocw-bridge/opencode-go.env` for the bridge proxy. Both
+paths are gitignored by `ocw init`, `ocw setup`, and `ocw bridge install`.
+`ocw keys set` also gitignores the key registry when it creates the default
+project-local key file.
 
 For ephemeral CI or team runners, skip the key file and provide a comma-separated
 priority list:
@@ -861,6 +875,10 @@ For repos where you use `ocw`, add:
 ```gitignore
 .codex/opencode-workers/
 .codex/opencode-worktrees/
+.codex/ocw-keys.tsv
+.codex/ocw-bridge/
+.codex/ocw-bridge-results/
+.codex/ocw-bridge-worktrees/
 ```
 
 ## Status

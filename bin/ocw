@@ -1649,6 +1649,30 @@ ensure_gitignore_entry() {
   printf '%s\n' "$entry" >> "$gitignore"
 }
 
+ensure_ocw_gitignore_entries() {
+  local gitignore="$1"
+
+  ensure_gitignore_entry "$gitignore" ".codex/opencode-workers/"
+  ensure_gitignore_entry "$gitignore" ".codex/opencode-worktrees/"
+  ensure_gitignore_entry "$gitignore" ".codex/ocw-keys.tsv"
+  ensure_gitignore_entry "$gitignore" ".codex/ocw-bridge/"
+  ensure_gitignore_entry "$gitignore" ".codex/ocw-bridge-results/"
+  ensure_gitignore_entry "$gitignore" ".codex/ocw-bridge-worktrees/"
+}
+
+ensure_sensitive_project_file_ignored() {
+  local file="$1"
+  local prefix="$PWD/.codex/"
+  local suffix
+
+  if [[ "$file" == .codex/* ]]; then
+    ensure_gitignore_entry ".gitignore" "$file"
+  elif [[ "$file" == "$prefix"* ]]; then
+    suffix="${file:${#prefix}}"
+    ensure_gitignore_entry ".gitignore" ".codex/$suffix"
+  fi
+}
+
 print_default_config() {
   cat <<'EOF'
 [models]
@@ -1778,6 +1802,8 @@ uninstall_remove_gitignore_entries() {
 
   if ! grep -Fxq ".codex/opencode-workers/" "$gitignore" && \
     ! grep -Fxq ".codex/opencode-worktrees/" "$gitignore" && \
+    ! grep -Fxq ".codex/ocw-keys.tsv" "$gitignore" && \
+    ! grep -Fxq ".codex/ocw-bridge/" "$gitignore" && \
     ! grep -Fxq ".codex/ocw-bridge-results/" "$gitignore" && \
     ! grep -Fxq ".codex/ocw-bridge-worktrees/" "$gitignore"; then
     printf 'Not installed gitignore entries: %s\n' "$gitignore"
@@ -1790,7 +1816,7 @@ uninstall_remove_gitignore_entries() {
   fi
 
   tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-gitignore.XXXXXX")"
-  awk '$0 != ".codex/opencode-workers/" && $0 != ".codex/opencode-worktrees/" && $0 != ".codex/ocw-bridge-results/" && $0 != ".codex/ocw-bridge-worktrees/" { print }' "$gitignore" > "$tmp"
+  awk '$0 != ".codex/opencode-workers/" && $0 != ".codex/opencode-worktrees/" && $0 != ".codex/ocw-keys.tsv" && $0 != ".codex/ocw-bridge/" && $0 != ".codex/ocw-bridge-results/" && $0 != ".codex/ocw-bridge-worktrees/" { print }' "$gitignore" > "$tmp"
   mv "$tmp" "$gitignore"
   printf 'Removed OCW gitignore entries: %s\n' "$gitignore"
 }
@@ -2014,8 +2040,7 @@ EOF
   done
 
   if [[ "$install_gitignore" -eq 1 ]]; then
-    ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
-    ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+    ensure_ocw_gitignore_entries ".gitignore"
     printf 'Updated gitignore: .gitignore\n'
   fi
 
@@ -2333,6 +2358,7 @@ EOF
       validate_env_name "$env_name"
       validate_key_value "${key_value:-}"
       ensure_parent_dir "$file"
+      ensure_sensitive_project_file_ignored "$file"
       existing="$(auth_read_records "$file")"
       if printf '%s\n' "$existing" | awk -F '\t' -v name="$name" '$1 == name { found = 1 } END { exit(found ? 0 : 1) }'; then
         found=1
@@ -4504,8 +4530,7 @@ EOF
 
   case "$subcommand" in
     sync)
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      ensure_ocw_gitignore_entries ".gitignore"
       write_default_config ".ocw.toml" "$force"
       copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
       copy_if_needed "$OCW_HOME/examples/claude/CLAUDE.md" "CLAUDE.md" "Claude Code instructions" "$force"
@@ -6404,8 +6429,7 @@ EOF
 
   case "$target" in
     codex)
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      ensure_ocw_gitignore_entries ".gitignore"
       write_default_config ".ocw.toml" "$force"
       copy_if_needed "$OCW_HOME/examples/codex/AGENTS.md" "AGENTS.md" "Codex instructions" "$force"
       install_agent_skill "Codex" "$codex_skills_dir"
@@ -6424,8 +6448,7 @@ EOF
       fi
       ;;
     claude)
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      ensure_ocw_gitignore_entries ".gitignore"
       write_default_config ".ocw.toml" "$force"
       copy_if_needed "$OCW_HOME/examples/claude/CLAUDE.md" "CLAUDE.md" "Claude Code instructions" "$force"
       install_agent_skill "Claude Code" "$claude_skills_dir"
@@ -6441,8 +6464,7 @@ EOF
       fi
       ;;
     opencode)
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-workers/"
-      ensure_gitignore_entry ".gitignore" ".codex/opencode-worktrees/"
+      ensure_ocw_gitignore_entries ".gitignore"
       write_default_config ".ocw.toml" "$force"
       install_agent_skill "OpenCode" "$opencode_skills_dir"
       if [[ "$project_skills" -eq 1 ]]; then

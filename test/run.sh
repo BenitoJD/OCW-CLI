@@ -211,6 +211,7 @@ test_key_management_and_rotation() {
   cd "$repo"
 
   "$OCW" keys set primary --value fail-key --env OPENCODE_API_KEY --activate >/dev/null
+  assert_contains ".gitignore" ".codex/ocw-keys.tsv"
   "$OCW" keys set backup --value good-key --env OPENCODE_API_KEY --force >/dev/null
   "$OCW" keys list --json > "$TMP_ROOT/keys-list.json"
   node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.keys.length !== 2 || data.keys[0].name !== 'primary' || data.keys[0].fingerprint.includes('fail-key')) process.exit(1)" "$TMP_ROOT/keys-list.json"
@@ -346,6 +347,10 @@ test_init_project() {
   assert_file "CLAUDE.md"
   assert_contains ".gitignore" ".codex/opencode-workers/"
   assert_contains ".gitignore" ".codex/opencode-worktrees/"
+  assert_contains ".gitignore" ".codex/ocw-keys.tsv"
+  assert_contains ".gitignore" ".codex/ocw-bridge/"
+  assert_contains ".gitignore" ".codex/ocw-bridge-results/"
+  assert_contains ".gitignore" ".codex/ocw-bridge-worktrees/"
   assert_contains ".ocw.toml" "[models]"
   assert_contains ".ocw.toml" "worktree = true"
   assert_file "$codex_skills/opencode-worker/SKILL.md"
@@ -414,6 +419,10 @@ test_uninstall_command() {
   [[ ! -e ".opencode/agents/ocw-explorer.md" ]] || fail "expected OpenCode agent uninstall"
   assert_not_contains ".gitignore" ".codex/opencode-workers/"
   assert_not_contains ".gitignore" ".codex/opencode-worktrees/"
+  assert_not_contains ".gitignore" ".codex/ocw-keys.tsv"
+  assert_not_contains ".gitignore" ".codex/ocw-bridge/"
+  assert_not_contains ".gitignore" ".codex/ocw-bridge-results/"
+  assert_not_contains ".gitignore" ".codex/ocw-bridge-worktrees/"
 }
 
 test_last_show_clean() {

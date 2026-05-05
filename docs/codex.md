@@ -28,7 +28,7 @@ Steps:
 8. Ask me for my OpenCode Go API key.
 9. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
    `OPENCODE_GO_API_KEY=<my key>`
-10. Confirm `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
+10. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
 11. Run `ocw bridge codex-config --write --project --force`.
 12. Start or restart the bridge with `ocw bridge start`.
 13. Run `ocw bridge test --live`.
@@ -36,6 +36,8 @@ Steps:
     - one command that uses OCW CLI workers
     - one Codex command or instruction that uses the `opencode_bridge` provider
     - whether I need to restart Codex for the new provider config to be picked up
+15. If `opencode_bridge` is not visible in this Codex session, tell me to start a
+    new Codex session in this same project.
 
 Rules:
 - Do not print my API key back to me.
@@ -46,9 +48,14 @@ Rules:
 
 ## Quick setup
 
+For the live bridge test, save your OpenCode Go key in
+`.codex/ocw-bridge/opencode-go.env` first.
+
 ```bash
 ocw doctor --deep
 ocw setup all
+ocw bridge start
+ocw bridge test --live
 ocw bridge doctor
 ```
 
