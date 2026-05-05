@@ -6567,8 +6567,7 @@ bridge_load_env_file() {
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid bridge env key in $env_file: $key"
     case "$key" in
       OPENCODE_GO_API_KEY|OCW_BRIDGE_KEY|PROXY_API_KEY|LITELLM_MASTER_KEY|UPSTREAM_BASE|UPSTREAM_TIMEOUT_SECONDS|UPSTREAM_RETRIES|MODEL_MAP_JSON|FALLBACK_MODEL_MAP_JSON|PROXY_STATE_DB|PROXY_STATE_TTL_SECONDS|PROXY_STATE_MAX_RESPONSES|PROXY_LOG_PATH|FORCE_SINGLE_TOOL_INSTRUCTIONS|STRIP_TOOLS|SSE_CHUNK_SIZE|SSE_UPSTREAM_HEARTBEAT_SECONDS|EXPOSE_EMPTY_REASONING_ITEM)
-        printf -v "$key" '%s' "$value"
-        export "$key"
+        export "$key=$value"
         ;;
       *)
         die "unsupported bridge env key in $env_file: $key"
