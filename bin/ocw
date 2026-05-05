@@ -843,8 +843,11 @@ auth_keys_file_path() {
   local path="${OCW_KEYS_FILE:-${OCW_CONFIG_KEYS_FILE:-$(ocw_state_dir)/ocw-keys.tsv}}"
 
   case "$path" in
-    "~"|"~/"*)
-      printf '%s%s\n' "$HOME" "${path#\~}"
+    \~)
+      printf '%s\n' "$HOME"
+      ;;
+    \~/*)
+      printf '%s/%s\n' "$HOME" "${path#\~/}"
       ;;
     *)
       printf '%s\n' "$path"
