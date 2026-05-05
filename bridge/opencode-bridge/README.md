@@ -12,8 +12,9 @@ When this runtime is installed through OCW, use the OCW commands instead of
 copying files by hand:
 
 ```bash
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
-ocw bridge start
 ocw bridge test --live
 ```
 
@@ -21,6 +22,8 @@ OCW also installs generic helper scripts under `.codex/ocw-bridge/bin/`:
 `oss-scout`, `oss-review`, `oss-docs`, and `oss-patch`.
 It also installs `worker.toml` and `explorer.toml` overrides so Codex's
 built-in worker/explorer roles can run through OpenCode Go.
+`ocw bridge bootstrap --live` keeps the proxy running as the native user service
+for macOS, Linux, or Windows.
 
 ### Zero-config: just tell Codex
 

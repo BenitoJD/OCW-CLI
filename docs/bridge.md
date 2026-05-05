@@ -14,17 +14,20 @@ any project:
 
 ```bash
 ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
-ocw bridge start
 ocw bridge test --live
 ```
 
 `ocw bridge key set --stdin` uses macOS Keychain when available and a chmod-600
-user config file elsewhere. If `OPENCODE_GO_API_KEY` is already available in
-your shell, one command can also set up, start, and verify the bridge:
+user config file elsewhere. `ocw bridge bootstrap --live` installs the global
+runtime and starts the bridge as an always-on user service. If
+`OPENCODE_GO_API_KEY` is already available in your shell, save it without
+pasting:
 
 ```bash
-ocw bridge setup --force --live
+ocw bridge key set --from-env OPENCODE_GO_API_KEY
+ocw bridge bootstrap --live
 ```
 
 Project-specific override:
@@ -57,14 +60,23 @@ to Codex.
 ```bash
 ocw bridge setup
 ocw bridge install
+ocw bridge bootstrap [--live]
+ocw bridge service install [--manager auto|launchd|systemd|windows]
+ocw bridge service start
+ocw bridge service stop
+ocw bridge service status --json
+ocw bridge service logs
+ocw bridge service uninstall
 ocw bridge start [--timeout SECONDS]
 ocw bridge stop
 ocw bridge status --json
 ocw bridge doctor --json
 ocw bridge test --json
 ocw bridge test --live
-ocw bridge codex-config
-ocw bridge codex-config --write --project
+ocw bridge proxy-key status --json
+ocw bridge proxy-key rotate
+ocw bridge codex-config [--host HOST] [--port PORT]
+ocw bridge codex-config --write --project [--host HOST] [--port PORT]
 ocw bridge agents sync
 ocw bridge workers sync
 ocw bridge workers doctor
@@ -75,6 +87,21 @@ ocw bridge orchestration sync
 `install`, `agents sync`, `workers sync`, `orchestration sync`,
 `codex-config --write --project`, `workers doctor`, and `bridge doctor` in the
 right order.
+
+`ocw bridge bootstrap --live` is the preferred machine setup command. It
+installs a global bridge runtime, creates a stable local proxy key, installs the
+native user service, starts it, and verifies `/v1/models`.
+
+Service managers:
+
+- macOS: launchd user LaunchAgent at `~/Library/LaunchAgents/dev.ocw.bridge.plist`
+- Linux: `systemd --user` unit at `~/.config/systemd/user/ocw-bridge.service`
+- Windows: Task Scheduler task named `OCW Bridge`
+
+Use `ocw bridge service status`, `ocw bridge service logs`, and
+`ocw bridge service uninstall` for lifecycle management. The older
+`ocw bridge start|stop` commands remain available for project-local debugging
+but are no longer the recommended everyday path.
 
 ## Codex Config
 
@@ -91,16 +118,18 @@ stream_idle_timeout_ms = 900000
 
 [model_providers.opencode_bridge.auth]
 command = "sh"
-args = ["-c", "printf %s \"${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}\""]
+args = ["-c", "if [ -n \"${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-}}}\" ]; then printf %s \"${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-}}}\"; else '/absolute/path/to/ocw' bridge proxy-key print; fi"]
 timeout_ms = 1000
 ```
 
 Use `--write --project` to append it to `.codex/config.toml`, or `--write
 --global` for `~/.codex/config.toml`.
 
-For persistent custom proxy auth, set `OCW_BRIDGE_KEY` or `PROXY_API_KEY` in
-the environment used by both Codex and `ocw bridge start`. The config generator
-deliberately avoids writing custom bridge keys into project TOML.
+The generated auth command uses a stable local proxy key managed by
+`ocw bridge proxy-key`. The config generator writes an absolute path to the
+current `ocw` executable so Codex can read the key even when its PATH is
+different from your terminal. It deliberately avoids writing proxy secrets into
+project TOML.
 
 ## Agent Templates
 
@@ -201,17 +230,20 @@ The scripts accept `--tasks-dir`, `--results-dir`, `--dir`, `--env-file`,
 ## Safety
 
 - Bind the bridge to localhost only.
-- `ocw bridge start` refuses non-loopback hosts unless
+- `ocw bridge bootstrap`, `ocw bridge service install`, and `ocw bridge start`
+  refuse non-loopback hosts unless
   `OCW_BRIDGE_ALLOW_NON_LOOPBACK=1` is set.
 - Prefer `ocw bridge key set --stdin` for the OpenCode Go upstream key so users
   are not asked again in every project.
+- `ocw bridge proxy-key` manages the local localhost proxy key. This is separate
+  from the upstream OpenCode Go API key.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
 - Do not commit `.codex/ocw-bridge-results/` or
   `.codex/ocw-bridge-worktrees/` unless your team deliberately archives worker
   artifacts.
-- If you customize the local proxy key, put the same `LITELLM_MASTER_KEY`,
-  `PROXY_API_KEY`, or `OCW_BRIDGE_KEY` value in the shell or env file used by
-  `ocw bridge start`; `status`, `doctor`, and `test` read that env file too.
+- If you customize the local proxy key with `LITELLM_MASTER_KEY`,
+  `PROXY_API_KEY`, or `OCW_BRIDGE_KEY`, restart the bridge service so the daemon
+  and Codex use the same value.
 - Treat bridge model output as draft labor.
 - Keep Codex responsible for final review, tests, and applying patches.
 - Use `ocw audit`, `ocw policy check`, and `ocw apply --check` for artifact

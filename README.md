@@ -34,13 +34,25 @@ The safety model is intentionally conservative: worker output is draft labor. Yo
 OCW's main feature is the bridge-backed Codex worker path:
 
 ```bash
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
 ```
 
-That one command installs the project-local bridge runtime, writes the
-`opencode_bridge` Codex model provider, syncs bridge-native OSS agent
-templates, and installs `worker.toml` plus `explorer.toml` into
-`.codex/agents/`.
+`ocw bridge key set --stdin` is one-time machine setup. OCW stores the
+OpenCode Go key globally, using macOS Keychain when available and a chmod-600
+user config file elsewhere. `ocw bridge bootstrap --live` installs and starts an
+always-on localhost bridge service using the native service manager for the
+platform:
+
+- macOS: launchd user LaunchAgent with `RunAtLoad` and `KeepAlive`
+- Linux: `systemd --user` service with `Restart=always`
+- Windows: Task Scheduler logon task with restart-on-failure
+
+`ocw bridge setup --force` is the lightweight per-project step: it installs the
+project bridge config, writes the `opencode_bridge` Codex model provider, syncs
+bridge-native OSS agent templates, and installs `worker.toml` plus
+`explorer.toml` into `.codex/agents/`.
 
 Codex's built-in `worker` and `explorer` roles are then project-local custom
 agents backed by OpenCode Go:
@@ -50,22 +62,19 @@ agents backed by OpenCode Go:
   implementation drafts.
 - Codex still orchestrates, reviews, tests, and writes the final answer.
 
-Finish setup:
+Verify any time:
 
 ```bash
-ocw bridge key set --stdin
-ocw bridge start --timeout 60
+ocw bridge service status
 ocw bridge test --live
 ```
 
-`ocw bridge key set --stdin` is one-time machine setup. OCW stores the
-OpenCode Go key globally, using macOS Keychain when available and a chmod-600
-user config file elsewhere. After that, every project can use the bridge without
-asking for the key again. If your shell already has `OPENCODE_GO_API_KEY`, this
-can be one command:
+After that, every project can use the bridge without asking for the key again.
+If your shell already has `OPENCODE_GO_API_KEY`, you can save it without pasting:
 
 ```bash
-ocw bridge setup --force --live
+ocw bridge key set --from-env OPENCODE_GO_API_KEY
+ocw bridge bootstrap --live
 ```
 
 Then start a new Codex session in that project and ask explicitly:
@@ -105,7 +114,7 @@ Steps:
 7. If no bridge key is configured, ask me for my OpenCode Go API key once and
    save it with `ocw bridge key set --stdin`.
 8. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
-9. Start or restart the bridge with `ocw bridge start --timeout 60`.
+9. Install or restart the always-on bridge with `ocw bridge bootstrap --live --timeout 60`.
 10. Run `ocw bridge test --live`.
 11. Run `ocw bridge workers doctor`.
 12. Show me the ready provider name, the ready `ocg-*` models, and two examples:
@@ -253,11 +262,11 @@ Enable Codex-native OSS subagents through OCW Bridge:
 
 ```bash
 ocw bridge setup --force
-ocw bridge start
+ocw bridge bootstrap --live
 ocw bridge test --live
 ```
 
-The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
+The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. `ocw bridge bootstrap` keeps it running as an OS-native user service on macOS, Linux, and Windows. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
 
 For the tightest Codex integration, `ocw bridge workers sync` installs
 project-local `worker` and `explorer` custom agents that override Codex's

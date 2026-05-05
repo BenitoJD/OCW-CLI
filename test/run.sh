@@ -1173,7 +1173,7 @@ test_pr_review_command() {
 test_bridge_command() {
   local repo="$TMP_ROOT/bridge"
   local port setup_start_port config install_json doctor_json test_json status_json start_output stop_output
-  local setup_start_repo bridge_global_key_file
+  local setup_start_repo bridge_global_key_file service_root
   make_repo "$repo"
   cd "$repo"
   port=$((4300 + RANDOM % 1000))
@@ -1215,10 +1215,103 @@ test_bridge_command() {
   assert_contains "$config" "[model_providers.opencode_bridge]"
   assert_contains "$config" "base_url = \"http://127.0.0.1:$port/v1\""
   assert_contains "$config" "[model_providers.opencode_bridge.auth]"
-  assert_contains "$config" "OCW_BRIDGE_KEY"
+  assert_contains "$config" "bridge proxy-key print"
+  "$OCW" bridge codex-config --host localhost --port "$port" > "$TMP_ROOT/bridge-codex-config-localhost.toml"
+  assert_contains "$TMP_ROOT/bridge-codex-config-localhost.toml" "base_url = \"http://localhost:$port/v1\""
+  "$OCW" bridge codex-config --host ::1 --port "$port" > "$TMP_ROOT/bridge-codex-config-ipv6.toml"
+  assert_contains "$TMP_ROOT/bridge-codex-config-ipv6.toml" "base_url = \"http://[::1]:$port/v1\""
+
+  service_root="$TMP_ROOT/bridge-service"
+  mkdir -p "$service_root"
+  OCW_GLOBAL_CONFIG_DIR="$service_root/proxy-config" \
+    "$OCW" bridge proxy-key status --json > "$TMP_ROOT/bridge-proxy-key-missing.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.exists) process.exit(1)" "$TMP_ROOT/bridge-proxy-key-missing.json"
+  OCW_GLOBAL_CONFIG_DIR="$service_root/proxy-config" \
+    "$OCW" bridge proxy-key print > "$TMP_ROOT/bridge-proxy-key.txt"
+  assert_not_contains "$TMP_ROOT/bridge-proxy-key.txt" "sk-local-codex-bridge"
+  OCW_GLOBAL_CONFIG_DIR="$service_root/proxy-config" \
+    "$OCW" bridge proxy-key status --json > "$TMP_ROOT/bridge-proxy-key-status.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.exists || !data.fingerprint) process.exit(1)" "$TMP_ROOT/bridge-proxy-key-status.json"
+  OCW_GLOBAL_CONFIG_DIR="$service_root/proxy-config" \
+    "$OCW" bridge proxy-key rotate > "$TMP_ROOT/bridge-proxy-key-rotate.txt"
+  assert_contains "$TMP_ROOT/bridge-proxy-key-rotate.txt" "OCW bridge proxy key rotated"
+  : > "$TMP_ROOT/bridge-proxy-key-race.txt"
+  for _ in 1 2 3 4 5 6 7 8; do
+    (
+      OCW_GLOBAL_CONFIG_DIR="$service_root/proxy-race-config" \
+        "$OCW" bridge proxy-key print >> "$TMP_ROOT/bridge-proxy-key-race.txt"
+    ) &
+  done
+  wait
+  [[ "$(sort -u "$TMP_ROOT/bridge-proxy-key-race.txt" | wc -l | tr -d ' ')" == "1" ]] || fail "expected concurrent proxy-key print calls to return the same key"
+
+  OCW_GLOBAL_DATA_DIR="$service_root/data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/logs" \
+    OCW_BRIDGE_LAUNCHD_PLIST="$service_root/dev.ocw.bridge.plist" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/ocw-bridge-launchd.sh" \
+    "$OCW" bridge service install --manager launchd --port "$port" --dry-run --force > "$TMP_ROOT/bridge-service-launchd.txt"
+  assert_file "$service_root/dev.ocw.bridge.plist"
+  assert_file "$service_root/ocw-bridge-launchd.sh"
+  assert_file "$service_root/data/ocw-service-runner"
+  assert_contains "$service_root/dev.ocw.bridge.plist" "<key>KeepAlive</key>"
+  assert_contains "$service_root/ocw-bridge-launchd.sh" "bridge run-service"
+  assert_contains "$service_root/ocw-bridge-launchd.sh" "$service_root/data/ocw-service-runner"
+
+  OCW_GLOBAL_DATA_DIR="$service_root/data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/logs" \
+    OCW_BRIDGE_SYSTEMD_UNIT="$service_root/ocw-bridge.service" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/ocw-bridge-systemd.sh" \
+    "$OCW" bridge service install --manager systemd --port "$port" --dry-run --force > "$TMP_ROOT/bridge-service-systemd.txt"
+  assert_file "$service_root/ocw-bridge.service"
+  assert_contains "$service_root/ocw-bridge.service" "Restart=always"
+  assert_contains "$service_root/ocw-bridge.service" "ExecStart=$service_root/ocw-bridge-systemd.sh"
+
+  OCW_GLOBAL_DATA_DIR="$service_root/json-data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/json-config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/json-state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/json-logs" \
+    OCW_BRIDGE_SYSTEMD_UNIT="$service_root/ocw-bridge-json.service" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/ocw-bridge-json.sh" \
+    "$OCW" bridge service install --manager systemd --port "$port" --dry-run --force --json > "$TMP_ROOT/bridge-service-install.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.schema_version !== 'ocw.bridge.service.install.v1' || data.manager !== 'systemd' || data.dry_run !== true || data.port !== Number(process.argv[2])) process.exit(1)" "$TMP_ROOT/bridge-service-install.json" "$port"
+  OCW_GLOBAL_DATA_DIR="$service_root/json-data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/json-config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/json-state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/json-logs" \
+    OCW_BRIDGE_SYSTEMD_UNIT="$service_root/ocw-bridge-json.service" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/ocw-bridge-json.sh" \
+    "$OCW" bridge service status --manager systemd --port "$port" --json > "$TMP_ROOT/bridge-service-status.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.schema_version !== 'ocw.bridge.service.status.v1' || data.manager !== 'systemd' || data.installed !== true || data.health !== false) process.exit(1)" "$TMP_ROOT/bridge-service-status.json"
+
+  OCW_GLOBAL_DATA_DIR="$service_root/data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/logs" \
+    OCW_BRIDGE_WINDOWS_TASK_XML="$service_root/ocw-bridge-task.xml" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/ocw-bridge.cmd" \
+    "$OCW" bridge service install --manager windows --port "$port" --dry-run --force > "$TMP_ROOT/bridge-service-windows.txt"
+  assert_file "$service_root/ocw-bridge-task.xml"
+  assert_file "$service_root/ocw-bridge.cmd"
+  assert_contains "$service_root/ocw-bridge-task.xml" "<RestartOnFailure>"
+  assert_contains "$service_root/ocw-bridge.cmd" "bridge run-service"
+
+  OCW_GLOBAL_DATA_DIR="$service_root/bootstrap-data" \
+    OCW_GLOBAL_CONFIG_DIR="$service_root/bootstrap-config" \
+    OCW_GLOBAL_STATE_DIR="$service_root/bootstrap-state" \
+    OCW_BRIDGE_LOG_DIR="$service_root/bootstrap-logs" \
+    OCW_BRIDGE_SYSTEMD_UNIT="$service_root/bootstrap.service" \
+    OCW_BRIDGE_SERVICE_LAUNCHER="$service_root/bootstrap.sh" \
+    "$OCW" bridge bootstrap --manager systemd --port "$port" --dry-run --force > "$TMP_ROOT/bridge-bootstrap.txt"
+  assert_contains "$TMP_ROOT/bridge-bootstrap.txt" "OCW bridge service installed: systemd"
+  assert_file "$service_root/bootstrap.service"
 
   "$OCW" bridge setup --force --port "$port" > "$TMP_ROOT/bridge-setup.txt"
   assert_contains "$TMP_ROOT/bridge-setup.txt" "OCW bridge setup complete"
+  assert_contains "$TMP_ROOT/bridge-setup.txt" "ocw bridge bootstrap --live"
   assert_file ".codex/ocw-bridge/bridge.py"
   assert_file ".codex/agents/worker.toml"
   assert_file ".codex/agents/explorer.toml"

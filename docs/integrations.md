@@ -37,6 +37,8 @@ Bootstrap a project:
 ocw init
 ocw hooks install all
 ocw setup all
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
 ocw delegate "Summarize this repository"
 ocw verdict latest
@@ -67,16 +69,19 @@ Use OCW Bridge when Codex should spawn OpenCode Go backed native subagents via
 a local Responses-compatible provider:
 
 ```bash
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
-ocw bridge start
 ocw bridge test --live
 ```
 
 Save the OpenCode Go key once with `ocw bridge key set --stdin` before live
-model calls. OCW Bridge reuses that global key in every project. A repo can
-still override it with `.codex/ocw-bridge/opencode-go.env` when needed. The
-generated `.codex/agents/*.toml` files use the `opencode_bridge` provider and
-keep the primary agent responsible for final review.
+model calls. `ocw bridge bootstrap --live` installs the always-on bridge with
+launchd on macOS, `systemd --user` on Linux, and Task Scheduler on Windows. OCW
+Bridge reuses that global key in every project. A repo can still override it
+with `.codex/ocw-bridge/opencode-go.env` when needed. The generated
+`.codex/agents/*.toml` files use the `opencode_bridge` provider and keep the
+primary agent responsible for final review.
 
 `ocw bridge orchestration sync` writes the reusable routing pack to
 `.codex/ocw-bridge-orchestration/`. `ocw bridge install` also installs

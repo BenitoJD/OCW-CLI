@@ -338,24 +338,52 @@ const tools = [
   },
   {
     name: 'ocw_bridge',
-    description: 'Manage the OCW OpenCode Bridge runtime for Codex-native OSS subagents.',
+    description: 'Manage the OCW OpenCode Bridge runtime, always-on bridge service, and Codex-native OSS subagents.',
     inputSchema: schema({
       ...commonProperties,
       action: {
         type: 'string',
-        enum: ['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync', 'orchestration-sync'],
+        enum: [
+          'setup',
+          'bootstrap',
+          'install',
+          'start',
+          'stop',
+          'status',
+          'doctor',
+          'test',
+          'codex-config',
+          'agents-sync',
+          'workers-sync',
+          'workers-doctor',
+          'workers-diff',
+          'orchestration-sync',
+          'service-install',
+          'service-start',
+          'service-stop',
+          'service-status',
+          'service-logs',
+          'service-uninstall',
+          'proxy-key-status',
+          'proxy-key-rotate',
+          'proxy-key-path',
+        ],
       },
       dir: { type: 'string', description: 'Target directory for install, agent sync, or orchestration sync.' },
+      manager: { type: 'string', enum: ['auto', 'launchd', 'systemd', 'windows'], description: 'Bridge service manager. Defaults to auto.' },
       host: { type: 'string', description: 'Bridge bind/check host. Defaults to 127.0.0.1.' },
       port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Bridge port. Defaults to 4000.' },
-      key: { type: 'string', description: 'Local proxy key. Defaults to sk-local-codex-bridge.' },
+      key: { type: 'string', description: 'Optional local proxy key override for legacy start/status/test flows. Normally omit it and let ocw bridge proxy-key manage the key.' },
       timeout_seconds: { type: 'integer', minimum: 1, maximum: 300, description: 'Startup health timeout for start. Defaults to 15.' },
       force: { type: 'boolean', description: 'Overwrite OCW-owned bridge files/config where supported.' },
+      dry_run: { type: 'boolean', description: 'Generate service files without mutating the OS service manager where supported.' },
+      all: { type: 'boolean', description: 'For service-uninstall, also remove the global bridge runtime.' },
+      lines: { type: 'integer', minimum: 1, maximum: 10000, description: 'For service-logs, number of log lines to return.' },
       write: { type: 'boolean', description: 'For codex-config, write instead of print.' },
       global: { type: 'boolean', description: 'For codex-config, target ~/.codex/config.toml.' },
       project: { type: 'boolean', description: 'For codex-config, target .codex/config.toml.' },
-      live: { type: 'boolean', description: 'For test, call /v1/models through the live provider.' },
-      json: { type: 'boolean', description: 'Return JSON where supported. Defaults to true for status/doctor/test/install.' },
+      live: { type: 'boolean', description: 'For test/bootstrap/service-install, call /v1/models through the live provider.' },
+      json: { type: 'boolean', description: 'Return JSON where supported. Defaults to true for status/doctor/test/install/service/proxy-key status.' },
     }, ['action']),
     annotations: { readOnlyHint: false },
   },
@@ -999,41 +1027,72 @@ function callTool(name, args) {
 
   if (name === 'ocw_bridge') {
     const action = assertString(input.action, 'action', true);
-    if (!['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync', 'orchestration-sync'].includes(action)) {
+    const actionMap = {
+      'agents-sync': ['agents', 'sync'],
+      'workers-sync': ['workers', 'sync'],
+      'workers-doctor': ['workers', 'doctor'],
+      'workers-diff': ['workers', 'diff'],
+      'orchestration-sync': ['orchestration', 'sync'],
+      'service-install': ['service', 'install'],
+      'service-start': ['service', 'start'],
+      'service-stop': ['service', 'stop'],
+      'service-status': ['service', 'status'],
+      'service-logs': ['service', 'logs'],
+      'service-uninstall': ['service', 'uninstall'],
+      'proxy-key-status': ['proxy-key', 'status'],
+      'proxy-key-rotate': ['proxy-key', 'rotate'],
+      'proxy-key-path': ['proxy-key', 'path'],
+    };
+    const supported = [
+      'setup',
+      'bootstrap',
+      'install',
+      'start',
+      'stop',
+      'status',
+      'doctor',
+      'test',
+      'codex-config',
+      ...Object.keys(actionMap),
+    ];
+    if (!supported.includes(action)) {
       throw new Error(`unsupported bridge action: ${action}`);
     }
-    const ocwArgs = ['bridge'];
-    if (action === 'agents-sync') {
-      ocwArgs.push('agents', 'sync');
-    } else if (action === 'orchestration-sync') {
-      ocwArgs.push('orchestration', 'sync');
-    } else {
-      ocwArgs.push(action);
-    }
+    const ocwArgs = ['bridge', ...(actionMap[action] || [action])];
     const dir = assertString(input.dir, 'dir');
-    if (dir && (action === 'install' || action === 'agents-sync' || action === 'orchestration-sync')) ocwArgs.push('--dir', dir);
+    if (dir && ['install', 'agents-sync', 'workers-sync', 'workers-doctor', 'workers-diff', 'orchestration-sync'].includes(action)) ocwArgs.push('--dir', dir);
+    const manager = assertString(input.manager, 'manager');
+    if (manager && ['bootstrap', 'service-install', 'service-start', 'service-stop', 'service-status', 'service-uninstall'].includes(action)) ocwArgs.push('--manager', manager);
     const host = assertString(input.host, 'host');
-    if (host && ['start', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--host', host);
+    if (host && ['setup', 'bootstrap', 'start', 'status', 'doctor', 'test', 'codex-config', 'service-install', 'service-start', 'service-status'].includes(action)) ocwArgs.push('--host', host);
     if (input.port !== undefined && input.port !== null) {
       if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
         throw new Error('port must be an integer between 1 and 65535');
       }
-      if (['start', 'status', 'doctor', 'test', 'codex-config'].includes(action)) ocwArgs.push('--port', String(input.port));
+      if (['setup', 'bootstrap', 'start', 'status', 'doctor', 'test', 'codex-config', 'service-install', 'service-start', 'service-status'].includes(action)) ocwArgs.push('--port', String(input.port));
     }
     const key = assertString(input.key, 'key');
-    if (key && ['start', 'status', 'doctor', 'test', 'codex-config'].includes(action)) ocwArgs.push('--key', key);
+    if (key && ['start', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--key', key);
     if (input.timeout_seconds !== undefined && input.timeout_seconds !== null) {
       if (!Number.isInteger(input.timeout_seconds) || input.timeout_seconds < 1 || input.timeout_seconds > 300) {
         throw new Error('timeout_seconds must be an integer between 1 and 300');
       }
-      if (action === 'start') ocwArgs.push('--timeout', String(input.timeout_seconds));
+      if (['setup', 'bootstrap', 'start', 'service-install', 'service-start'].includes(action)) ocwArgs.push('--timeout', String(input.timeout_seconds));
     }
-    if (assertBoolean(input.force, 'force') && ['install', 'codex-config', 'agents-sync', 'orchestration-sync'].includes(action)) ocwArgs.push('--force');
+    if (assertBoolean(input.force, 'force') && ['setup', 'bootstrap', 'install', 'codex-config', 'agents-sync', 'workers-sync', 'orchestration-sync', 'service-install'].includes(action)) ocwArgs.push('--force');
+    if (assertBoolean(input.dry_run, 'dry_run') && ['bootstrap', 'service-install', 'service-uninstall'].includes(action)) ocwArgs.push('--dry-run');
+    if (assertBoolean(input.all, 'all') && action === 'service-uninstall') ocwArgs.push('--all');
+    if (input.lines !== undefined && input.lines !== null) {
+      if (!Number.isInteger(input.lines) || input.lines < 1 || input.lines > 10000) {
+        throw new Error('lines must be an integer between 1 and 10000');
+      }
+      if (action === 'service-logs') ocwArgs.push('--lines', String(input.lines));
+    }
     if (assertBoolean(input.write, 'write') && action === 'codex-config') ocwArgs.push('--write');
     if (assertBoolean(input.global, 'global') && action === 'codex-config') ocwArgs.push('--global');
     if (assertBoolean(input.project, 'project') && action === 'codex-config') ocwArgs.push('--project');
-    if (assertBoolean(input.live, 'live') && action === 'test') ocwArgs.push('--live');
-    if (input.json !== false && ['install', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--json');
+    if (assertBoolean(input.live, 'live') && ['setup', 'bootstrap', 'test', 'service-install'].includes(action)) ocwArgs.push('--live');
+    if (input.json !== false && ['install', 'status', 'doctor', 'test', 'service-install', 'service-status', 'proxy-key-status'].includes(action)) ocwArgs.push('--json');
     result = runOcw(ocwArgs, input);
     return toolResponse(name, result);
   }

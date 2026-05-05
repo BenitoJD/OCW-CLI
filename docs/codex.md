@@ -27,7 +27,7 @@ Steps:
 7. If no bridge key is configured, ask me for my OpenCode Go API key once and
    save it with `ocw bridge key set --stdin`.
 8. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
-9. Start or restart the bridge with `ocw bridge start --timeout 60`.
+9. Install or restart the always-on bridge service with `ocw bridge bootstrap --live --timeout 60`.
 10. Run `ocw bridge test --live`.
 11. Run `ocw bridge workers doctor`.
 12. Show me the ready provider name, the ready `ocg-*` models, and two examples:
@@ -48,15 +48,17 @@ Rules:
 
 ## Quick setup
 
-For the live bridge test, save your OpenCode Go key in
-`.codex/ocw-bridge/opencode-go.env` first.
+For the live bridge test, save your OpenCode Go key once with
+`ocw bridge key set --stdin` first.
 
 ```bash
 ocw doctor --deep
 ocw setup all
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
-ocw bridge start
 ocw bridge test --live
+ocw bridge service status
 ocw bridge doctor
 ```
 
@@ -130,8 +132,9 @@ Use OCW Bridge when you want OpenCode Go models to appear as Codex-native model
 provider agents:
 
 ```bash
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
 ocw bridge setup --force
-ocw bridge start
 ocw bridge test --live
 ```
 
@@ -144,6 +147,11 @@ ocw bridge key status
 
 That stores the key once for every project. A project-specific override can
 still live in `.codex/ocw-bridge/opencode-go.env`.
+
+`ocw bridge bootstrap --live` keeps the proxy running as an OS-native user
+service: launchd on macOS, `systemd --user` on Linux, and Task Scheduler on
+Windows. Use `ocw bridge service status` and `ocw bridge service logs` when you
+need to inspect it.
 
 Then start a new Codex session so the provider and agent files are loaded.
 

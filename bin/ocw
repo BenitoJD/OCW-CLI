@@ -54,7 +54,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
-  ocw bridge setup|install|start|stop|status|doctor|test|key|codex-config|agents|workers|orchestration [options]
+  ocw bridge bootstrap|service|setup|install|start|stop|status|doctor|test|key|proxy-key|codex-config|agents|workers|orchestration [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
@@ -6569,7 +6569,12 @@ bridge_runtime_dir() {
 }
 
 bridge_default_key() {
-  printf '%s\n' "${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}"
+  local stored=""
+
+  if [[ -z "${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-}}}" ]]; then
+    stored="$(bridge_proxy_key_read 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-${stored:-sk-local-codex-bridge}}}}"
 }
 
 bridge_loopback_host_ok() {
@@ -6577,6 +6582,15 @@ bridge_loopback_host_ok() {
   case "$host" in
     127.*|localhost|::1) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+bridge_url_host() {
+  local host="$1"
+
+  case "$host" in
+    *:*) printf '[%s]\n' "$host" ;;
+    *) printf '%s\n' "$host" ;;
   esac
 }
 
@@ -6635,6 +6649,142 @@ bridge_global_config_dir() {
 
 bridge_global_env_file() {
   bridge_expand_user_path "${OCW_BRIDGE_GLOBAL_ENV_FILE:-$(bridge_global_config_dir)/opencode-go.env}"
+}
+
+bridge_platform_id() {
+  local uname_s
+
+  uname_s="$(uname -s 2>/dev/null || true)"
+  case "$uname_s" in
+    Darwin) printf 'macos\n' ;;
+    Linux) printf 'linux\n' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'windows\n' ;;
+    *)
+      if [[ "${OS:-}" == "Windows_NT" ]]; then
+        printf 'windows\n'
+      else
+        printf 'unknown\n'
+      fi
+      ;;
+  esac
+}
+
+bridge_global_data_dir() {
+  local platform
+
+  platform="$(bridge_platform_id)"
+  if [[ -n "${OCW_GLOBAL_DATA_DIR:-}" ]]; then
+    bridge_expand_user_path "$OCW_GLOBAL_DATA_DIR"
+  elif [[ "$platform" == "macos" ]]; then
+    printf '%s\n' "$HOME/Library/Application Support/ocw"
+  elif [[ "$platform" == "windows" ]]; then
+    bridge_expand_user_path "${LOCALAPPDATA:-$HOME/AppData/Local}/ocw"
+  else
+    bridge_expand_user_path "${XDG_DATA_HOME:-$HOME/.local/share}/ocw"
+  fi
+}
+
+bridge_global_state_dir() {
+  local platform
+
+  platform="$(bridge_platform_id)"
+  if [[ -n "${OCW_GLOBAL_STATE_DIR:-}" ]]; then
+    bridge_expand_user_path "$OCW_GLOBAL_STATE_DIR"
+  elif [[ "$platform" == "macos" ]]; then
+    printf '%s\n' "$HOME/Library/Application Support/ocw/state"
+  elif [[ "$platform" == "windows" ]]; then
+    bridge_expand_user_path "${LOCALAPPDATA:-$HOME/AppData/Local}/ocw/state"
+  else
+    bridge_expand_user_path "${XDG_STATE_HOME:-$HOME/.local/state}/ocw"
+  fi
+}
+
+bridge_global_log_dir() {
+  local platform
+
+  platform="$(bridge_platform_id)"
+  if [[ -n "${OCW_BRIDGE_LOG_DIR:-}" ]]; then
+    bridge_expand_user_path "$OCW_BRIDGE_LOG_DIR"
+  elif [[ "$platform" == "macos" ]]; then
+    printf '%s\n' "$HOME/Library/Logs/ocw"
+  elif [[ "$platform" == "windows" ]]; then
+    bridge_expand_user_path "${LOCALAPPDATA:-$HOME/AppData/Local}/ocw/logs"
+  else
+    bridge_expand_user_path "${XDG_STATE_HOME:-$HOME/.local/state}/ocw/logs"
+  fi
+}
+
+bridge_global_runtime_dir() {
+  bridge_expand_user_path "${OCW_BRIDGE_GLOBAL_RUNTIME_DIR:-$(bridge_global_data_dir)/bridge-runtime}"
+}
+
+bridge_proxy_key_file() {
+  bridge_expand_user_path "${OCW_BRIDGE_PROXY_KEY_FILE:-$(bridge_global_config_dir)/bridge-proxy-key}"
+}
+
+bridge_proxy_key_read() {
+  local file key
+
+  file="$(bridge_proxy_key_file)"
+  [[ -f "$file" ]] || return 1
+  IFS= read -r key < "$file"
+  [[ -n "${key:-}" ]] || return 1
+  printf '%s\n' "$key"
+}
+
+bridge_generate_proxy_key() {
+  if have_command "$PYTHON_BIN"; then
+    "$PYTHON_BIN" -c 'import secrets; print("sk-ocw-" + secrets.token_urlsafe(32))'
+  elif [[ -r /dev/urandom ]] && have_command od; then
+    printf 'sk-ocw-'
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+  else
+    printf 'sk-ocw-%s-%s\n' "$(date +%s)" "$$"
+  fi
+}
+
+bridge_proxy_key_get_or_create() {
+  local file key tmp lock_dir attempts=0
+
+  key="$(bridge_proxy_key_read 2>/dev/null || true)"
+  if [[ -n "$key" ]]; then
+    printf '%s\n' "$key"
+    return
+  fi
+
+  file="$(bridge_proxy_key_file)"
+  mkdir -p "$(dirname "$file")"
+  lock_dir="$file.lock"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    key="$(bridge_proxy_key_read 2>/dev/null || true)"
+    if [[ -n "$key" ]]; then
+      printf '%s\n' "$key"
+      return
+    fi
+    attempts=$((attempts + 1))
+    (( attempts <= 100 )) || die "timed out waiting for bridge proxy key lock: $lock_dir"
+    sleep 0.1
+  done
+
+  key="$(bridge_proxy_key_read 2>/dev/null || true)"
+  if [[ -n "$key" ]]; then
+    rmdir "$lock_dir" 2>/dev/null || true
+    printf '%s\n' "$key"
+    return
+  fi
+
+  tmp="$(mktemp "$(dirname "$file")/.bridge-proxy-key.XXXXXX")"
+  chmod 600 "$tmp"
+  if ! bridge_generate_proxy_key > "$tmp"; then
+    rm -f "$tmp"
+    rmdir "$lock_dir" 2>/dev/null || true
+    die "failed to generate bridge proxy key"
+  fi
+  mv "$tmp" "$file"
+  chmod 600 "$file" 2>/dev/null || true
+  rmdir "$lock_dir" 2>/dev/null || true
+  bridge_proxy_key_read
 }
 
 bridge_keychain_service() {
@@ -6861,6 +7011,524 @@ bridge_load_credentials() {
   export OCW_BRIDGE_UPSTREAM_KEY_SOURCE="$source"
 }
 
+shell_single_quote() {
+  local value="$1"
+
+  value="${value//\'/\'\\\'\'}"
+  printf "'%s'" "$value"
+}
+
+bridge_self_abs() {
+  local self="${OCW_SELF:-$0}"
+  local dir base
+
+  case "$self" in
+    /*)
+      printf '%s\n' "$self"
+      ;;
+    */*)
+      dir="$(dirname "$self")"
+      base="$(basename "$self")"
+      printf '%s/%s\n' "$(cd "$dir" >/dev/null 2>&1 && pwd -P)" "$base"
+      ;;
+    *)
+      if command -v "$self" >/dev/null 2>&1; then
+        command -v "$self"
+      else
+        printf '%s\n' "$self"
+      fi
+      ;;
+  esac
+}
+
+bridge_service_name() {
+  printf '%s\n' "${OCW_BRIDGE_SERVICE_NAME:-ocw-bridge}"
+}
+
+bridge_service_label() {
+  printf '%s\n' "${OCW_BRIDGE_SERVICE_LABEL:-dev.ocw.bridge}"
+}
+
+bridge_windows_task_name() {
+  printf '%s\n' "${OCW_BRIDGE_WINDOWS_TASK_NAME:-OCW Bridge}"
+}
+
+bridge_service_manager() {
+  local requested="${1:-${OCW_BRIDGE_SERVICE_MANAGER:-auto}}"
+  local platform
+
+  case "$requested" in
+    auto)
+      platform="$(bridge_platform_id)"
+      case "$platform" in
+        macos) printf 'launchd\n' ;;
+        linux) printf 'systemd\n' ;;
+        windows) printf 'windows\n' ;;
+        *) die "unsupported platform for OCW bridge service: $(uname -s 2>/dev/null || printf unknown)" ;;
+      esac
+      ;;
+    launchd|systemd|windows)
+      printf '%s\n' "$requested"
+      ;;
+    *)
+      die "invalid bridge service manager: $requested (expected auto, launchd, systemd, or windows)"
+      ;;
+  esac
+}
+
+bridge_service_definition_path() {
+  local manager="$1"
+
+  case "$manager" in
+    launchd)
+      bridge_expand_user_path "${OCW_BRIDGE_LAUNCHD_PLIST:-$HOME/Library/LaunchAgents/$(bridge_service_label).plist}"
+      ;;
+    systemd)
+      bridge_expand_user_path "${OCW_BRIDGE_SYSTEMD_UNIT:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$(bridge_service_name).service}"
+      ;;
+    windows)
+      bridge_expand_user_path "${OCW_BRIDGE_WINDOWS_TASK_XML:-$(bridge_global_config_dir)/ocw-bridge-task.xml}"
+      ;;
+    *)
+      die "invalid bridge service manager: $manager"
+      ;;
+  esac
+}
+
+bridge_service_launcher_path() {
+  local manager="$1"
+  local suffix="sh"
+
+  [[ "$manager" == "windows" ]] && suffix="cmd"
+  bridge_expand_user_path "${OCW_BRIDGE_SERVICE_LAUNCHER:-$(bridge_global_data_dir)/ocw-bridge.$suffix}"
+}
+
+bridge_service_runner_path() {
+  bridge_expand_user_path "${OCW_BRIDGE_SERVICE_RUNNER:-$(bridge_global_data_dir)/ocw-service-runner}"
+}
+
+bridge_service_stdout_log() {
+  bridge_expand_user_path "${OCW_BRIDGE_STDOUT_LOG:-$(bridge_global_log_dir)/bridge.log}"
+}
+
+bridge_service_stderr_log() {
+  bridge_expand_user_path "${OCW_BRIDGE_STDERR_LOG:-$(bridge_global_log_dir)/bridge.err.log}"
+}
+
+bridge_install_global_runtime() {
+  local force="$1"
+  local quiet="${2:-0}"
+  local source_dir target_dir runner
+
+  source_dir="$(bridge_vendor_dir)"
+  target_dir="$(bridge_global_runtime_dir)"
+  runner="$(bridge_service_runner_path)"
+  [[ -f "$source_dir/bridge.py" ]] || die "bridge runtime not found: $source_dir"
+  mkdir -p "$target_dir"
+  if [[ "$force" -eq 1 || ! -f "$target_dir/bridge.py" ]]; then
+    cp -R "$source_dir/." "$target_dir/"
+    [[ "$quiet" -eq 1 ]] || printf 'Installed global bridge runtime: %s\n' "$target_dir"
+  else
+    cp -R "$source_dir/." "$target_dir/"
+    [[ "$quiet" -eq 1 ]] || printf 'Refreshed global bridge runtime: %s\n' "$target_dir"
+  fi
+  chmod +x "$target_dir/bridge.py" "$target_dir/bin/start-proxy" "$target_dir/bin/oss-scout" "$target_dir/bin/oss-review" "$target_dir/bin/oss-docs" "$target_dir/bin/oss-patch" 2>/dev/null || true
+  mkdir -p "$(dirname "$runner")"
+  cp "$(bridge_self_abs)" "$runner"
+  chmod +x "$runner"
+  [[ "$quiet" -eq 1 ]] || printf 'Installed bridge service runner: %s\n' "$runner"
+}
+
+bridge_write_posix_service_launcher() {
+  local launcher="$1"
+  local host="$2"
+  local port="$3"
+  local runtime_dir="$4"
+  local ocw_abs
+
+  ocw_abs="$(bridge_service_runner_path)"
+  mkdir -p "$(dirname "$launcher")"
+  {
+    printf '#!/usr/bin/env sh\n'
+    printf 'exec %s bridge run-service --host %s --port %s --runtime-dir %s\n' \
+      "$(shell_single_quote "$ocw_abs")" \
+      "$(shell_single_quote "$host")" \
+      "$(shell_single_quote "$port")" \
+      "$(shell_single_quote "$runtime_dir")"
+  } > "$launcher"
+  chmod +x "$launcher"
+}
+
+bridge_to_windows_path() {
+  local path="$1"
+
+  if have_command cygpath; then
+    cygpath -w "$path"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+bridge_write_windows_service_launcher() {
+  local launcher="$1"
+  local host="$2"
+  local port="$3"
+  local runtime_dir="$4"
+  local ocw_abs bash_exe="bash.exe"
+
+  ocw_abs="$(bridge_service_runner_path)"
+  if have_command bash && have_command cygpath; then
+    bash_exe="$(bridge_to_windows_path "$(command -v bash)")"
+  fi
+  mkdir -p "$(dirname "$launcher")"
+  {
+    printf '@echo off\r\n'
+    printf '"%s" -lc "exec %s bridge run-service --host %s --port %s --runtime-dir %s"\r\n' \
+      "$bash_exe" \
+      "$(shell_single_quote "$ocw_abs")" \
+      "$(shell_single_quote "$host")" \
+      "$(shell_single_quote "$port")" \
+      "$(shell_single_quote "$runtime_dir")"
+  } > "$launcher"
+}
+
+bridge_write_launchd_plist() {
+  local file="$1"
+  local launcher="$2"
+  local runtime_dir="$3"
+  local stdout_log="$4"
+  local stderr_log="$5"
+  local label
+
+  label="$(bridge_service_label)"
+  mkdir -p "$(dirname "$file")" "$(dirname "$stdout_log")" "$(dirname "$stderr_log")"
+  cat > "$file" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$(xml_escape "$label")</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_escape "$launcher")</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$(xml_escape "$runtime_dir")</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$(xml_escape "$stdout_log")</string>
+  <key>StandardErrorPath</key>
+  <string>$(xml_escape "$stderr_log")</string>
+</dict>
+</plist>
+EOF
+}
+
+bridge_write_systemd_unit() {
+  local file="$1"
+  local launcher="$2"
+  local runtime_dir="$3"
+  local stdout_log="$4"
+  local stderr_log="$5"
+
+  mkdir -p "$(dirname "$file")" "$(dirname "$stdout_log")" "$(dirname "$stderr_log")"
+  cat > "$file" <<EOF
+[Unit]
+Description=OCW Bridge
+Documentation=https://github.com/olliforbrands/OCW-CLI
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$launcher
+WorkingDirectory=$runtime_dir
+Restart=always
+RestartSec=2
+StandardOutput=append:$stdout_log
+StandardError=append:$stderr_log
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+bridge_write_windows_task_xml() {
+  local file="$1"
+  local launcher="$2"
+  local stdout_log="$3"
+  local stderr_log="$4"
+  local user cmd_path
+
+  user="$(whoami 2>/dev/null || printf '%s' "${USERNAME:-}")"
+  cmd_path="$(bridge_to_windows_path "$launcher")"
+  mkdir -p "$(dirname "$file")" "$(dirname "$stdout_log")" "$(dirname "$stderr_log")"
+  cat > "$file" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>$(xml_escape "$user")</Author>
+    <Description>OCW Bridge localhost Responses proxy</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$(xml_escape "$user")</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>cmd.exe</Command>
+      <Arguments>/c ""$(xml_escape "$cmd_path")" &gt;&gt; "$(xml_escape "$(bridge_to_windows_path "$stdout_log")")" 2&gt;&gt; "$(xml_escape "$(bridge_to_windows_path "$stderr_log")")""</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+EOF
+}
+
+bridge_service_write_files() {
+  local manager="$1"
+  local host="$2"
+  local port="$3"
+  local runtime_dir="$4"
+  local quiet="${5:-0}"
+  local service_file launcher stdout_log stderr_log
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  launcher="$(bridge_service_launcher_path "$manager")"
+  stdout_log="$(bridge_service_stdout_log)"
+  stderr_log="$(bridge_service_stderr_log)"
+  mkdir -p "$(dirname "$stdout_log")" "$(dirname "$stderr_log")"
+  : > "$stdout_log"
+  : > "$stderr_log"
+
+  if [[ "$manager" == "windows" ]]; then
+    bridge_write_windows_service_launcher "$launcher" "$host" "$port" "$runtime_dir"
+    bridge_write_windows_task_xml "$service_file" "$launcher" "$stdout_log" "$stderr_log"
+  else
+    bridge_write_posix_service_launcher "$launcher" "$host" "$port" "$runtime_dir"
+    if [[ "$manager" == "launchd" ]]; then
+      bridge_write_launchd_plist "$service_file" "$launcher" "$runtime_dir" "$stdout_log" "$stderr_log"
+    else
+      bridge_write_systemd_unit "$service_file" "$launcher" "$runtime_dir" "$stdout_log" "$stderr_log"
+    fi
+  fi
+
+  if [[ "$quiet" -ne 1 ]]; then
+    printf 'Installed bridge service launcher: %s\n' "$launcher"
+    printf 'Installed bridge service definition: %s\n' "$service_file"
+  fi
+}
+
+bridge_service_install_manager() {
+  local manager="$1"
+  local start="$2"
+  local dry_run="$3"
+  local quiet="${4:-0}"
+  local service_file label uid task_name
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  label="$(bridge_service_label)"
+  if [[ "$dry_run" -eq 1 ]]; then
+    [[ "$quiet" -eq 1 ]] || printf 'OCW bridge service install dry-run: %s\n' "$manager"
+    return
+  fi
+
+  case "$manager" in
+    launchd)
+      require_command launchctl
+      uid="$(id -u)"
+      if [[ "$start" -eq 1 ]]; then
+        launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+        launchctl bootstrap "gui/$uid" "$service_file"
+        launchctl enable "gui/$uid/$label" >/dev/null 2>&1 || true
+        launchctl kickstart -k "gui/$uid/$label"
+      fi
+      ;;
+    systemd)
+      require_command systemctl
+      systemctl --user daemon-reload
+      systemctl --user enable "$(basename "$service_file")"
+      if [[ "$start" -eq 1 ]]; then
+        systemctl --user restart "$(basename "$service_file")"
+      fi
+      ;;
+    windows)
+      require_command schtasks.exe
+      task_name="$(bridge_windows_task_name)"
+      schtasks.exe /Create /TN "$task_name" /XML "$(bridge_to_windows_path "$service_file")" /F >/dev/null
+      if [[ "$start" -eq 1 ]]; then
+        schtasks.exe /Run /TN "$task_name" >/dev/null
+      fi
+      ;;
+  esac
+}
+
+bridge_service_start_manager() {
+  local manager="$1"
+  local service_file label uid task_name
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  label="$(bridge_service_label)"
+  case "$manager" in
+    launchd)
+      require_command launchctl
+      uid="$(id -u)"
+      launchctl bootstrap "gui/$uid" "$service_file" >/dev/null 2>&1 || true
+      launchctl kickstart -k "gui/$uid/$label"
+      ;;
+    systemd)
+      require_command systemctl
+      systemctl --user start "$(basename "$service_file")"
+      ;;
+    windows)
+      require_command schtasks.exe
+      task_name="$(bridge_windows_task_name)"
+      schtasks.exe /Run /TN "$task_name" >/dev/null
+      ;;
+  esac
+}
+
+bridge_service_stop_manager() {
+  local manager="$1"
+  local service_file label uid task_name
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  label="$(bridge_service_label)"
+  case "$manager" in
+    launchd)
+      require_command launchctl
+      uid="$(id -u)"
+      launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+      ;;
+    systemd)
+      require_command systemctl
+      systemctl --user stop "$(basename "$service_file")" >/dev/null 2>&1 || true
+      ;;
+    windows)
+      require_command schtasks.exe
+      task_name="$(bridge_windows_task_name)"
+      schtasks.exe /End /TN "$task_name" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+bridge_service_uninstall_manager() {
+  local manager="$1"
+  local dry_run="$2"
+  local service_file task_name
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf 'OCW bridge service uninstall dry-run: %s\n' "$manager"
+    return
+  fi
+  bridge_service_stop_manager "$manager" || true
+  case "$manager" in
+    systemd)
+      systemctl --user disable "$(basename "$service_file")" >/dev/null 2>&1 || true
+      systemctl --user daemon-reload >/dev/null 2>&1 || true
+      ;;
+    windows)
+      require_command schtasks.exe
+      task_name="$(bridge_windows_task_name)"
+      schtasks.exe /Delete /TN "$task_name" /F >/dev/null 2>&1 || true
+      ;;
+    launchd) ;;
+  esac
+}
+
+bridge_service_active() {
+  local manager="$1"
+  local service_file label uid task_name
+
+  service_file="$(bridge_service_definition_path "$manager")"
+  label="$(bridge_service_label)"
+  case "$manager" in
+    launchd)
+      have_command launchctl || return 1
+      uid="$(id -u)"
+      launchctl print "gui/$uid/$label" >/dev/null 2>&1
+      ;;
+    systemd)
+      have_command systemctl || return 1
+      systemctl --user is-active --quiet "$(basename "$service_file")"
+      ;;
+    windows)
+      have_command schtasks.exe || return 1
+      task_name="$(bridge_windows_task_name)"
+      schtasks.exe /Query /TN "$task_name" >/dev/null 2>&1
+      ;;
+  esac
+}
+
+bridge_run_service_command() {
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local runtime_dir="${OCW_BRIDGE_SERVICE_RUNTIME_DIR:-$(bridge_global_runtime_dir)}"
+  local key
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --runtime-dir) runtime_dir="$2"; shift 2 ;;
+      -h|--help)
+        printf 'Usage: ocw bridge run-service [--host HOST] [--port PORT] [--runtime-dir DIR]\n'
+        return
+        ;;
+      *) die "unknown bridge run-service option: $1" ;;
+    esac
+  done
+
+  bridge_validate_port "$port"
+  require_command "$PYTHON_BIN"
+  [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
+  if ! bridge_loopback_host_ok "$host" && [[ "${OCW_BRIDGE_ALLOW_NON_LOOPBACK:-0}" != "1" ]]; then
+    die "refusing to bind bridge to non-loopback host '$host' (set OCW_BRIDGE_ALLOW_NON_LOOPBACK=1 to override)"
+  fi
+
+  bridge_load_credentials "$(bridge_global_env_file)"
+  key="$(bridge_proxy_key_get_or_create)"
+  export LITELLM_MASTER_KEY="$key"
+  export PROXY_API_KEY="$key"
+  export PROXY_HOST="$host"
+  export PROXY_PORT="$port"
+  export PROXY_STATE_DB="${PROXY_STATE_DB:-$(bridge_global_state_dir)/bridge-state.sqlite3}"
+  export FORCE_SINGLE_TOOL_INSTRUCTIONS="${FORCE_SINGLE_TOOL_INSTRUCTIONS:-1}"
+  export FALLBACK_MODEL_MAP_JSON="${FALLBACK_MODEL_MAP_JSON:-{\"deepseek-v4-pro\":[\"kimi-k2.6\",\"deepseek-v4-flash\"],\"kimi-k2.6\":[\"deepseek-v4-pro\"],\"deepseek-v4-flash\":[\"kimi-k2.6\"]}}"
+  mkdir -p "$(bridge_global_state_dir)"
+  exec "$PYTHON_BIN" "$runtime_dir/bridge.py" --host "$host" --port "$port"
+}
+
 bridge_health_status() {
   local host="$1"
   local port="$2"
@@ -6919,11 +7587,14 @@ bridge_pid_running() {
 
 bridge_print_codex_config() {
   local port="$1"
+  local host="${2:-127.0.0.1}"
+  local auth_cmd
 
+  auth_cmd="if [ -n \"\${OCW_BRIDGE_KEY:-\${PROXY_API_KEY:-\${LITELLM_MASTER_KEY:-}}}\" ]; then printf %s \"\${OCW_BRIDGE_KEY:-\${PROXY_API_KEY:-\${LITELLM_MASTER_KEY:-}}}\"; else $(shell_single_quote "$(bridge_self_abs)") bridge proxy-key print; fi"
   cat <<EOF
 [model_providers.opencode_bridge]
 name = "OpenCode Bridge"
-base_url = "http://127.0.0.1:$port/v1"
+base_url = "http://$(bridge_url_host "$host"):$port/v1"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
@@ -6931,7 +7602,7 @@ stream_idle_timeout_ms = 900000
 
 [model_providers.opencode_bridge.auth]
 command = "sh"
-args = ["-c", "printf %s \"\${OCW_BRIDGE_KEY:-\${PROXY_API_KEY:-\${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}\""]
+args = ["-c", $(json_string "$auth_cmd")]
 timeout_ms = 1000
 
 [profiles.oss_native]
@@ -6947,10 +7618,11 @@ bridge_write_codex_config() {
   local target="$1"
   local force="$2"
   local port="$3"
+  local host="${4:-127.0.0.1}"
   local tmp snippet
 
   mkdir -p "$(dirname "$target")"
-  snippet="$(bridge_print_codex_config "$port")"
+  snippet="$(bridge_print_codex_config "$port" "$host")"
 
   if [[ -f "$target" ]] && grep -Fq "[model_providers.opencode_bridge]" "$target"; then
     if [[ "$force" -ne 1 ]]; then
@@ -7376,7 +8048,11 @@ bridge_start_command() {
   mkdir -p "$state_dir"
   bridge_load_credentials "$env_file"
   if [[ "$key_arg" -ne 1 ]]; then
-    key="$(bridge_default_key)"
+    if [[ -z "${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-}}}" ]]; then
+      key="$(bridge_proxy_key_get_or_create)"
+    else
+      key="$(bridge_default_key)"
+    fi
   fi
 
   if bridge_health_check "$host" "$port" "$key"; then
@@ -7793,10 +8469,365 @@ EOF
   esac
 }
 
+bridge_proxy_key_command() {
+  local subcommand="${1:-status}"
+  shift || true
+  local key fingerprint file tmp json=0
+
+  file="$(bridge_proxy_key_file)"
+  case "$subcommand" in
+    print)
+      bridge_proxy_key_get_or_create
+      ;;
+    status|doctor)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --json) json=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw bridge proxy-key status [--json]\n'
+            return
+            ;;
+          *) die "unknown bridge proxy-key status option: $1" ;;
+        esac
+      done
+      key="$(bridge_proxy_key_read 2>/dev/null || true)"
+      if [[ -n "$key" ]]; then
+        fingerprint="$(auth_key_fingerprint "$key")"
+      else
+        fingerprint=""
+      fi
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.bridge.proxy_key.v1",\n'
+        printf '  "exists": %s,\n' "$([[ -n "$key" ]] && printf true || printf false)"
+        printf '  "file": '
+        json_string "$file"
+        printf ',\n  "fingerprint": '
+        json_string "$fingerprint"
+        printf '\n}\n'
+      else
+        printf 'OCW bridge proxy key: %s\n' "$([[ -n "$key" ]] && printf configured || printf missing)"
+        printf 'file: %s\n' "$file"
+        [[ -n "$fingerprint" ]] && printf 'fingerprint: %s\n' "$fingerprint"
+      fi
+      ;;
+    rotate)
+      mkdir -p "$(dirname "$file")"
+      tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-bridge-proxy-key.XXXXXX")"
+      chmod 600 "$tmp"
+      bridge_generate_proxy_key > "$tmp"
+      mv "$tmp" "$file"
+      chmod 600 "$file" 2>/dev/null || true
+      printf 'OCW bridge proxy key rotated: %s\n' "$file"
+      printf 'Restart the bridge service so the new proxy key is used.\n'
+      ;;
+    path)
+      printf '%s\n' "$file"
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw bridge proxy-key print
+  ocw bridge proxy-key status [--json]
+  ocw bridge proxy-key rotate
+  ocw bridge proxy-key path
+
+This key protects the localhost bridge itself. It is not your OpenCode Go
+upstream key. Codex reads it through the generated auth command.
+EOF
+      ;;
+    *)
+      die "unknown bridge proxy-key command: $subcommand"
+      ;;
+  esac
+}
+
+bridge_service_command() {
+  local subcommand="${1:-status}"
+  shift || true
+  local manager_input="${OCW_BRIDGE_SERVICE_MANAGER:-auto}" manager
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local timeout="${OCW_BRIDGE_START_TIMEOUT:-60}"
+  local force=0 start=0 live=0 dry_run=0 json=0 lines=120 all=0
+  local runtime_dir service_file launcher runner stdout_log stderr_log key active=false health=false installed=false
+  local wait_status=0
+
+  case "$subcommand" in
+    install)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --manager) manager_input="$2"; shift 2 ;;
+          --host) host="$2"; shift 2 ;;
+          --port) port="$2"; shift 2 ;;
+          --timeout) timeout="$2"; shift 2 ;;
+          --force) force=1; shift ;;
+          --start) start=1; shift ;;
+          --live) live=1; start=1; shift ;;
+          --dry-run) dry_run=1; shift ;;
+          --json) json=1; shift ;;
+          -h|--help)
+            cat <<'EOF'
+Usage: ocw bridge service install [--manager auto|launchd|systemd|windows] [--host HOST] [--port PORT] [--start] [--live] [--force] [--dry-run] [--json]
+EOF
+            return
+            ;;
+          *) die "unknown bridge service install option: $1" ;;
+        esac
+      done
+      manager="$(bridge_service_manager "$manager_input")"
+      bridge_validate_port "$port"
+      [[ "$timeout" =~ ^[0-9]+$ ]] || die "invalid bridge service timeout: $timeout"
+      if ! bridge_loopback_host_ok "$host" && [[ "${OCW_BRIDGE_ALLOW_NON_LOOPBACK:-0}" != "1" ]]; then
+        die "refusing to bind bridge service to non-loopback host '$host' (set OCW_BRIDGE_ALLOW_NON_LOOPBACK=1 to override)"
+      fi
+      runtime_dir="$(bridge_global_runtime_dir)"
+      bridge_install_global_runtime "$force" "$json"
+      bridge_proxy_key_get_or_create >/dev/null
+      bridge_service_write_files "$manager" "$host" "$port" "$runtime_dir" "$json"
+      bridge_service_install_manager "$manager" "$start" "$dry_run" "$json"
+      key="$(bridge_default_key)"
+      if [[ "$start" -eq 1 && "$dry_run" -ne 1 ]]; then
+        bridge_wait_for_health "$host" "$port" "$key" "" "$timeout" || wait_status=$?
+        if [[ "$wait_status" -ne 0 ]]; then
+          die "OCW bridge service did not pass health within ${timeout}s; inspect $(bridge_service_stderr_log)"
+        fi
+      fi
+      if [[ "$live" -eq 1 && "$dry_run" -ne 1 ]]; then
+        if [[ "$json" -eq 1 ]]; then
+          bridge_test_command --live --host "$host" --port "$port" --json >/dev/null
+        else
+          bridge_test_command --live --host "$host" --port "$port"
+        fi
+      fi
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.bridge.service.install.v1",\n'
+        printf '  "manager": '
+        json_string "$manager"
+        printf ',\n  "host": '
+        json_string "$host"
+        printf ',\n  "port": %s,\n  "dry_run": %s,\n  "started": %s' "$port" "$([[ "$dry_run" -eq 1 ]] && printf true || printf false)" "$([[ "$start" -eq 1 && "$dry_run" -ne 1 ]] && printf true || printf false)"
+        printf ',\n  "runtime": '
+        json_string "$runtime_dir"
+        printf ',\n  "service_file": '
+        json_string "$(bridge_service_definition_path "$manager")"
+        printf ',\n  "launcher": '
+        json_string "$(bridge_service_launcher_path "$manager")"
+        printf ',\n  "runner": '
+        json_string "$(bridge_service_runner_path)"
+        printf '\n}\n'
+      else
+        printf 'OCW bridge service installed: %s\n' "$manager"
+        printf 'runtime: %s\n' "$runtime_dir"
+        printf 'service file: %s\n' "$(bridge_service_definition_path "$manager")"
+        printf 'launcher: %s\n' "$(bridge_service_launcher_path "$manager")"
+        printf 'runner: %s\n' "$(bridge_service_runner_path)"
+      fi
+      ;;
+    start)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --manager) manager_input="$2"; shift 2 ;;
+          --host) host="$2"; shift 2 ;;
+          --port) port="$2"; shift 2 ;;
+          --timeout) timeout="$2"; shift 2 ;;
+          -h|--help)
+            printf 'Usage: ocw bridge service start [--manager auto|launchd|systemd|windows] [--host HOST] [--port PORT] [--timeout SECONDS]\n'
+            return
+            ;;
+          *) die "unknown bridge service start option: $1" ;;
+        esac
+      done
+      manager="$(bridge_service_manager "$manager_input")"
+      bridge_validate_port "$port"
+      bridge_service_start_manager "$manager"
+      key="$(bridge_default_key)"
+      bridge_wait_for_health "$host" "$port" "$key" "" "$timeout" || die "OCW bridge service did not pass health within ${timeout}s; inspect $(bridge_service_stderr_log)"
+      printf 'OCW bridge service started: %s\n' "$manager"
+      ;;
+    stop)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --manager) manager_input="$2"; shift 2 ;;
+          -h|--help)
+            printf 'Usage: ocw bridge service stop [--manager auto|launchd|systemd|windows]\n'
+            return
+            ;;
+          *) die "unknown bridge service stop option: $1" ;;
+        esac
+      done
+      manager="$(bridge_service_manager "$manager_input")"
+      bridge_service_stop_manager "$manager"
+      printf 'OCW bridge service stopped: %s\n' "$manager"
+      ;;
+    status|doctor)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --manager) manager_input="$2"; shift 2 ;;
+          --host) host="$2"; shift 2 ;;
+          --port) port="$2"; shift 2 ;;
+          --json) json=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw bridge service status [--manager auto|launchd|systemd|windows] [--host HOST] [--port PORT] [--json]\n'
+            return
+            ;;
+          *) die "unknown bridge service status option: $1" ;;
+        esac
+      done
+      manager="$(bridge_service_manager "$manager_input")"
+      service_file="$(bridge_service_definition_path "$manager")"
+      launcher="$(bridge_service_launcher_path "$manager")"
+      runner="$(bridge_service_runner_path)"
+      runtime_dir="$(bridge_global_runtime_dir)"
+      stdout_log="$(bridge_service_stdout_log)"
+      stderr_log="$(bridge_service_stderr_log)"
+      [[ -f "$service_file" ]] && installed=true
+      bridge_service_active "$manager" && active=true
+      key="$(bridge_default_key)"
+      bridge_health_check "$host" "$port" "$key" && health=true
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.bridge.service.status.v1",\n'
+        printf '  "manager": '
+        json_string "$manager"
+        printf ',\n  "installed": %s,\n  "active": %s,\n  "health": %s,\n' "$installed" "$active" "$health"
+        printf '  "service_file": '
+        json_string "$service_file"
+        printf ',\n  "launcher": '
+        json_string "$launcher"
+        printf ',\n  "runner": '
+        json_string "$runner"
+        printf ',\n  "runtime": '
+        json_string "$runtime_dir"
+        printf ',\n  "stdout_log": '
+        json_string "$stdout_log"
+        printf ',\n  "stderr_log": '
+        json_string "$stderr_log"
+        printf '\n}\n'
+      else
+        printf 'OCW bridge service: %s\n' "$manager"
+        printf 'installed: %s\n' "$installed"
+        printf 'active: %s\n' "$active"
+        printf 'health: %s\n' "$health"
+        printf 'service file: %s\n' "$service_file"
+        printf 'launcher: %s\n' "$launcher"
+        printf 'runner: %s\n' "$runner"
+        printf 'runtime: %s\n' "$runtime_dir"
+        printf 'stdout log: %s\n' "$stdout_log"
+        printf 'stderr log: %s\n' "$stderr_log"
+      fi
+      ;;
+    logs)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --lines) lines="$2"; shift 2 ;;
+          -n) lines="$2"; shift 2 ;;
+          -h|--help)
+            printf 'Usage: ocw bridge service logs [--lines N]\n'
+            return
+            ;;
+          *) die "unknown bridge service logs option: $1" ;;
+        esac
+      done
+      [[ "$lines" =~ ^[0-9]+$ ]] || die "invalid log line count: $lines"
+      stdout_log="$(bridge_service_stdout_log)"
+      stderr_log="$(bridge_service_stderr_log)"
+      printf '==> %s <==\n' "$stdout_log"
+      [[ -f "$stdout_log" ]] && tail -n "$lines" "$stdout_log" || true
+      printf '==> %s <==\n' "$stderr_log"
+      [[ -f "$stderr_log" ]] && tail -n "$lines" "$stderr_log" || true
+      ;;
+    uninstall|remove|rm)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --manager) manager_input="$2"; shift 2 ;;
+          --dry-run) dry_run=1; shift ;;
+          --all) all=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw bridge service uninstall [--manager auto|launchd|systemd|windows] [--all] [--dry-run]\n'
+            return
+            ;;
+          *) die "unknown bridge service uninstall option: $1" ;;
+        esac
+      done
+      manager="$(bridge_service_manager "$manager_input")"
+      bridge_service_uninstall_manager "$manager" "$dry_run"
+      if [[ "$dry_run" -ne 1 ]]; then
+        rm -f "$(bridge_service_definition_path "$manager")" "$(bridge_service_launcher_path "$manager")"
+        if [[ "$all" -eq 1 ]]; then
+          rm -rf "$(bridge_global_runtime_dir)"
+        fi
+      fi
+      printf 'OCW bridge service uninstalled: %s\n' "$manager"
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw bridge service install [--manager auto|launchd|systemd|windows] [--start] [--live] [--force] [--dry-run]
+  ocw bridge service start [--manager auto|launchd|systemd|windows]
+  ocw bridge service stop [--manager auto|launchd|systemd|windows]
+  ocw bridge service status [--manager auto|launchd|systemd|windows] [--json]
+  ocw bridge service logs [--lines N]
+  ocw bridge service uninstall [--manager auto|launchd|systemd|windows] [--all] [--dry-run]
+
+Managers:
+- macOS: launchd user LaunchAgent with RunAtLoad and KeepAlive
+- Linux: systemd --user service with Restart=always
+- Windows: Task Scheduler logon task with RestartOnFailure
+EOF
+      ;;
+    *)
+      die "unknown bridge service command: $subcommand"
+      ;;
+  esac
+}
+
+bridge_bootstrap_command() {
+  local manager_input="${OCW_BRIDGE_SERVICE_MANAGER:-auto}"
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local timeout="${OCW_BRIDGE_START_TIMEOUT:-60}"
+  local force=0 live=0 dry_run=0
+  local -a install_args
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manager) manager_input="$2"; shift 2 ;;
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      --live) live=1; shift ;;
+      --dry-run) dry_run=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ocw bridge bootstrap [--manager auto|launchd|systemd|windows] [--host HOST] [--port PORT] [--timeout SECONDS] [--force] [--live] [--dry-run]
+
+Installs the global always-on OCW Bridge service and starts it. Run this once
+per machine, then run `ocw bridge setup --force` inside each project.
+EOF
+        return
+        ;;
+      *) die "unknown bridge bootstrap option: $1" ;;
+    esac
+  done
+
+  install_args=(install --manager "$manager_input" --host "$host" --port "$port" --timeout "$timeout" --start)
+  [[ "$force" -eq 1 ]] && install_args+=(--force)
+  [[ "$live" -eq 1 ]] && install_args+=(--live)
+  [[ "$dry_run" -eq 1 ]] && install_args+=(--dry-run)
+  bridge_service_command "${install_args[@]}"
+  if [[ "$dry_run" -ne 1 ]]; then
+    bridge_service_command status --manager "$manager_input" --host "$host" --port "$port"
+  fi
+}
+
 bridge_codex_config_command() {
   local write=0
   local force=0
   local target=".codex/config.toml"
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
 
   while [[ $# -gt 0 ]]; do
@@ -7806,10 +8837,11 @@ bridge_codex_config_command() {
       --project) target=".codex/config.toml"; shift ;;
       --global) target="${CODEX_HOME:-$HOME/.codex}/config.toml"; shift ;;
       --file) target="$2"; shift 2 ;;
+      --host) host="$2"; shift 2 ;;
       --port) port="$2"; shift 2 ;;
       --key) printf 'warning: --key is ignored by codex-config; set OCW_BRIDGE_KEY for persistent Codex auth\n' >&2; shift 2 ;;
       -h|--help)
-        printf 'Usage: ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force] [--port PORT] [--key KEY]\n'
+        printf 'Usage: ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force] [--host HOST] [--port PORT] [--key KEY]\n'
         return
         ;;
       *) die "unknown bridge codex-config option: $1" ;;
@@ -7817,10 +8849,13 @@ bridge_codex_config_command() {
   done
 
   bridge_validate_port "$port"
+  if ! bridge_loopback_host_ok "$host" && [[ "${OCW_BRIDGE_ALLOW_NON_LOOPBACK:-0}" != "1" ]]; then
+    die "refusing to write bridge config for non-loopback host '$host' (set OCW_BRIDGE_ALLOW_NON_LOOPBACK=1 to override)"
+  fi
   if [[ "$write" -eq 1 ]]; then
-    bridge_write_codex_config "$target" "$force" "$port"
+    bridge_write_codex_config "$target" "$force" "$port" "$host"
   else
-    bridge_print_codex_config "$port"
+    bridge_print_codex_config "$port" "$host"
   fi
 }
 
@@ -7852,8 +8887,8 @@ Sets up the core Codex integration in the current project:
 - orchestration routing docs
 
 Use `ocw bridge key set --stdin` once to save the OpenCode Go key globally.
-Then --live can start the bridge and verify real /v1/models reachability in
-any project.
+Use `ocw bridge bootstrap --live` once per machine for the always-on bridge
+service. --start is kept for foreground-style local testing.
 EOF
         return
         ;;
@@ -7869,13 +8904,13 @@ EOF
     bridge_agents_command sync --force
     bridge_workers_command sync --force
     bridge_orchestration_command sync --force
-    bridge_codex_config_command --write --project --force --port "$port"
+    bridge_codex_config_command --write --project --force --host "$host" --port "$port"
   else
     bridge_install_command
     bridge_agents_command sync
     bridge_workers_command sync
     bridge_orchestration_command sync
-    bridge_codex_config_command --write --project --port "$port"
+    bridge_codex_config_command --write --project --host "$host" --port "$port"
   fi
 
   bridge_workers_command doctor
@@ -7904,9 +8939,10 @@ OCW bridge setup complete.
 Next steps:
 1. Save your OpenCode Go key once for all projects:
    ocw bridge key set --stdin
-2. Start the bridge:
-   ocw bridge start --timeout $timeout
-3. Verify live model reachability:
+2. Install and start the always-on bridge service once on this machine:
+   ocw bridge bootstrap --live --timeout $timeout
+3. Verify the service any time:
+   ocw bridge service status
    ocw bridge test --live
 4. Start a new Codex session in this project so .codex/config.toml and .codex/agents/*.toml are loaded.
 5. Ask Codex to spawn an explorer or worker for bounded tasks.
@@ -7919,6 +8955,8 @@ bridge_command() {
   shift || true
 
   case "$subcommand" in
+    bootstrap) bridge_bootstrap_command "$@" ;;
+    service) bridge_service_command "$@" ;;
     setup) bridge_setup_command "$@" ;;
     install) bridge_install_command "$@" ;;
     start) bridge_start_command "$@" ;;
@@ -7927,6 +8965,8 @@ bridge_command() {
     doctor) bridge_doctor_command "$@" ;;
     test) bridge_test_command "$@" ;;
     key) bridge_key_command "$@" ;;
+    proxy-key) bridge_proxy_key_command "$@" ;;
+    run-service) bridge_run_service_command "$@" ;;
     codex-config) bridge_codex_config_command "$@" ;;
     agents) bridge_agents_command "$@" ;;
     workers) bridge_workers_command "$@" ;;
@@ -7934,6 +8974,8 @@ bridge_command() {
     -h|--help|help)
       cat <<'EOF'
 Usage:
+  ocw bridge bootstrap [--manager auto|launchd|systemd|windows] [--live] [--force]
+  ocw bridge service install|start|stop|status|logs|uninstall [options]
   ocw bridge setup [--force] [--start] [--live] [--host HOST] [--port PORT] [--timeout SECONDS]
   ocw bridge install [--dir DIR] [--force] [--json]
   ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--timeout SECONDS] [--foreground]
@@ -7942,7 +8984,8 @@ Usage:
   ocw bridge doctor [--json]
   ocw bridge test [--live] [--json]
   ocw bridge key set|status|list|doctor|remove|path [options]
-  ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force]
+  ocw bridge proxy-key status|rotate|path [options]
+  ocw bridge codex-config [--write] [--project|--global|--file FILE] [--host HOST] [--port PORT] [--force]
   ocw bridge agents sync [--dir DIR] [--force]
   ocw bridge workers sync|diff|doctor [--dir DIR] [--force]
   ocw bridge orchestration sync [--dir DIR] [--force]
@@ -9559,7 +10602,7 @@ _ocw()
       return 0
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W "setup install start stop status doctor test key codex-config agents workers orchestration" -- "$cur") )
+      COMPREPLY=( $(compgen -W "bootstrap service setup install start stop status doctor test key proxy-key codex-config agents workers orchestration" -- "$cur") )
       return 0
       ;;
     models)
@@ -9641,7 +10684,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         keys) _values 'action' set add list use remove doctor path ;;
         setup) _values 'target' codex claude opencode copilot all ;;
-        bridge) _values 'action' setup install start stop status doctor test key codex-config agents workers orchestration ;;
+        bridge) _values 'action' bootstrap service setup install start stop status doctor test key proxy-key codex-config agents workers orchestration ;;
         backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list profiles recommend configure bench ;;
         route) _values 'action' explain set doctor path ;;
@@ -9671,7 +10714,7 @@ complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from keys" -f -a "set add list use remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
-complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "setup install start stop status doctor test key codex-config agents workers orchestration"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "bootstrap service setup install start stop status doctor test key proxy-key codex-config agents workers orchestration"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"

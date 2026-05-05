@@ -181,15 +181,16 @@ ocw mcp-config opencode
 When the user wants Codex-native OpenCode Go subagents, use OCW Bridge:
 
 ```bash
-ocw bridge install
-ocw bridge agents sync
-ocw bridge codex-config --write --project
-ocw bridge start
-ocw bridge test
+ocw bridge key set --stdin
+ocw bridge bootstrap --live
+ocw bridge setup --force
+ocw bridge test --live
 ```
 
 Bridge mode complements worker artifacts. Keep Codex responsible for orchestration,
 final review, and tests even when OSS models are available as native subagents.
+Use `ocw bridge service status` and `ocw bridge service logs` to inspect the
+always-on bridge service.
 
 ## Safety Rules
 

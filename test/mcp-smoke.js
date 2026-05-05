@@ -45,6 +45,12 @@ function createClient(repo) {
       OCW_OUTPUT_ROOT: '.out',
       OCW_MOCK_LOG: path.join(repo, '.out', 'mock.log'),
       OCW_TEST_CREATED_AT: '2026-01-01T00:00:00Z',
+      OCW_GLOBAL_DATA_DIR: path.join(repo, '.ocw-global', 'data'),
+      OCW_GLOBAL_CONFIG_DIR: path.join(repo, '.ocw-global', 'config'),
+      OCW_GLOBAL_STATE_DIR: path.join(repo, '.ocw-global', 'state'),
+      OCW_BRIDGE_LOG_DIR: path.join(repo, '.ocw-global', 'logs'),
+      OCW_BRIDGE_SYSTEMD_UNIT: path.join(repo, '.ocw-global', 'ocw-bridge.service'),
+      OCW_BRIDGE_SERVICE_LAUNCHER: path.join(repo, '.ocw-global', 'ocw-bridge.sh'),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -135,6 +141,10 @@ function createClient(repo) {
       'ocw_tournament',
       'ocw_verdict',
     ].sort());
+    const bridgeTool = listed.tools.find((tool) => tool.name === 'ocw_bridge');
+    assert.ok(bridgeTool.inputSchema.properties.action.enum.includes('bootstrap'));
+    assert.ok(bridgeTool.inputSchema.properties.action.enum.includes('service-install'));
+    assert.ok(bridgeTool.inputSchema.properties.action.enum.includes('proxy-key-status'));
 
     const common = { cwd: repo, output_root: '.out' };
     const doctor = await client.request('tools/call', {
@@ -324,6 +334,20 @@ function createClient(repo) {
     });
     assert.equal(bridgeInstall.structuredContent.status, 0);
     assert.ok(fs.existsSync(path.join(repo, '.codex/ocw-bridge/bin/oss-scout')));
+    const bridgeProxyKey = await client.request('tools/call', {
+      name: 'ocw_bridge',
+      arguments: { ...common, action: 'proxy-key-status' },
+    });
+    assert.equal(bridgeProxyKey.structuredContent.status, 0);
+    assert.match(bridgeProxyKey.structuredContent.stdout, /ocw\.bridge\.proxy_key\.v1/);
+    const bridgeServiceInstall = await client.request('tools/call', {
+      name: 'ocw_bridge',
+      arguments: { ...common, action: 'service-install', manager: 'systemd', port: 45555, dry_run: true, force: true },
+    });
+    assert.equal(bridgeServiceInstall.structuredContent.status, 0);
+    assert.match(bridgeServiceInstall.structuredContent.stdout, /ocw\.bridge\.service\.install\.v1/);
+    assert.ok(fs.existsSync(path.join(repo, '.ocw-global', 'ocw-bridge.service')));
+    assert.ok(fs.existsSync(path.join(repo, '.ocw-global', 'data', 'ocw-service-runner')));
     const bridgeOrchestration = await client.request('tools/call', {
       name: 'ocw_bridge',
       arguments: { ...common, action: 'orchestration-sync', force: true },
