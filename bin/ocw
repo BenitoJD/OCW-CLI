@@ -8734,9 +8734,13 @@ EOF
       stdout_log="$(bridge_service_stdout_log)"
       stderr_log="$(bridge_service_stderr_log)"
       printf '==> %s <==\n' "$stdout_log"
-      [[ -f "$stdout_log" ]] && tail -n "$lines" "$stdout_log" || true
+      if [[ -f "$stdout_log" ]]; then
+        tail -n "$lines" "$stdout_log" || true
+      fi
       printf '==> %s <==\n' "$stderr_log"
-      [[ -f "$stderr_log" ]] && tail -n "$lines" "$stderr_log" || true
+      if [[ -f "$stderr_log" ]]; then
+        tail -n "$lines" "$stderr_log" || true
+      fi
       ;;
     uninstall|remove|rm)
       while [[ $# -gt 0 ]]; do
