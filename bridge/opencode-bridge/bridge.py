@@ -61,27 +61,25 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 JSON = Dict[str, Any]
 
-DEFAULT_MODEL_MAP = {
-    "ocg-deepseek-v4-pro": "deepseek-v4-pro",
-    "ocg-deepseek-v4-flash": "deepseek-v4-flash",
-    "ocg-kimi-k2.6": "kimi-k2.6",
-    "ocg-kimi-k2.5": "kimi-k2.5",
-    "ocg-qwen3.6-plus": "qwen3.6-plus",
-    "ocg-qwen3.5-plus": "qwen3.5-plus",
-    "ocg-glm-5.1": "glm-5.1",
-    "ocg-glm-5": "glm-5",
-    "ocg-minimax-m2.7": "minimax-m2.7",
-    "ocg-minimax-m2.5": "minimax-m2.5",
-    # Also accept direct OpenCode-style aliases.
-    "opencode-go/deepseek-v4-pro": "deepseek-v4-pro",
-    "opencode-go/deepseek-v4-flash": "deepseek-v4-flash",
-    "opencode-go/kimi-k2.6": "kimi-k2.6",
-    "opencode-go/kimi-k2.5": "kimi-k2.5",
-    "opencode-go/qwen3.6-plus": "qwen3.6-plus",
-    "opencode-go/qwen3.5-plus": "qwen3.5-plus",
-    "opencode-go/glm-5.1": "glm-5.1",
-    "opencode-go/glm-5": "glm-5",
-}
+OPENCODE_GO_MODELS = (
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "glm-5",
+    "glm-5.1",
+    "kimi-k2.5",
+    "kimi-k2.6",
+    "mimo-v2-omni",
+    "mimo-v2-pro",
+    "mimo-v2.5",
+    "mimo-v2.5-pro",
+    "minimax-m2.5",
+    "minimax-m2.7",
+    "qwen3.5-plus",
+    "qwen3.6-plus",
+)
+
+DEFAULT_MODEL_MAP = {f"ocg-{model}": model for model in OPENCODE_GO_MODELS}
+DEFAULT_MODEL_MAP.update({f"opencode-go/{model}": model for model in OPENCODE_GO_MODELS})
 
 DROP_TOOL_TYPES = {
     "image_generation",
@@ -629,6 +627,52 @@ def map_model(model: str, model_map: Dict[str, str]) -> str:
     return model
 
 
+def model_base_id(model_id: str) -> str:
+    if model_id.startswith("opencode-go/"):
+        return model_id.split("/", 1)[1]
+    if model_id.startswith("ocg-"):
+        return model_id[4:]
+    return model_id
+
+
+def augment_models_payload(data: bytes) -> bytes:
+    """Expose upstream models plus the aliases this Responses bridge accepts."""
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except Exception:
+        return data
+
+    items = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return data
+
+    seen = set()
+    augmented: List[JSON] = []
+
+    def append_model(model_id: str, source: JSON) -> None:
+        if not model_id or model_id in seen:
+            return
+        record = dict(source)
+        record["id"] = model_id
+        record.setdefault("object", "model")
+        augmented.append(record)
+        seen.add(model_id)
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "")
+        if not model_id:
+            continue
+        base = model_base_id(model_id)
+        append_model(model_id, item)
+        append_model(f"ocg-{base}", item)
+        append_model(f"opencode-go/{base}", item)
+
+    payload["data"] = augmented
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def is_deepseek(model: str) -> bool:
     return "deepseek" in model.lower()
 
@@ -747,7 +791,10 @@ class ProxyApp:
         req = urllib.request.Request(self.upstream_models_url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.status, resp.read(), resp.headers.get_content_type()
+                data = resp.read()
+                if 200 <= resp.status < 300:
+                    data = augment_models_payload(data)
+                return resp.status, data, resp.headers.get_content_type()
         except urllib.error.HTTPError as e:
             return e.code, e.read(), e.headers.get_content_type()
 
@@ -1340,6 +1387,19 @@ def run_self_test() -> None:
     except HistoryRepairError:
         # The repair function reaches final pending_now unmatched check.
         pass
+
+    for model in OPENCODE_GO_MODELS:
+        assert map_model(f"ocg-{model}", DEFAULT_MODEL_MAP) == model
+        assert map_model(f"opencode-go/{model}", DEFAULT_MODEL_MAP) == model
+
+    model_payload = augment_models_payload(
+        json.dumps({"data": [{"id": "deepseek-v4-pro"}, {"id": "mimo-v2.5"}]}).encode("utf-8")
+    )
+    model_ids = {item["id"] for item in json.loads(model_payload.decode("utf-8"))["data"]}
+    assert "ocg-deepseek-v4-pro" in model_ids
+    assert "opencode-go/deepseek-v4-pro" in model_ids
+    assert "ocg-mimo-v2.5" in model_ids
+    assert "opencode-go/mimo-v2.5" in model_ids
 
     print("self-test passed")
 

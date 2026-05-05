@@ -1391,7 +1391,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/").endswith("/models"):
-            self._json(200, {"data": [{"id": "deepseek-v4-pro"}, {"id": "kimi-k2.6"}]})
+            self._json(
+                200,
+                {
+                    "data": [
+                        {"id": "deepseek-v4-pro"},
+                        {"id": "kimi-k2.6"},
+                        {"id": "mimo-v2.5"},
+                        {"id": "minimax-m2.5"},
+                    ]
+                },
+            )
             return
         self._json(404, {"error": {"message": "not found"}})
 
@@ -1445,6 +1455,11 @@ PY
     "$OCW" bridge test --live --port "$port" > "$TMP_ROOT/bridge-stream-live.txt"
     assert_contains "$TMP_ROOT/bridge-stream-live.txt" "live models: true"
 
+    curl -fsS --max-time 10 "http://127.0.0.1:$port/v1/models" \
+      -H "Authorization: Bearer stream-key" \
+      > "$TMP_ROOT/bridge-models.json"
+    node -e "const ids = new Set(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).data.map((item) => item.id)); for (const id of ['deepseek-v4-pro', 'ocg-deepseek-v4-pro', 'opencode-go/deepseek-v4-pro', 'ocg-mimo-v2.5', 'opencode-go/mimo-v2.5', 'ocg-minimax-m2.5']) if (!ids.has(id)) { console.error('missing', id); process.exit(1); }" "$TMP_ROOT/bridge-models.json"
+
     curl -fsS -N --max-time 10 "http://127.0.0.1:$port/v1/responses" \
       -H "Authorization: Bearer stream-key" \
       -H "Content-Type: application/json" \
@@ -1461,6 +1476,20 @@ PY
       -d '{"model":"ocg-kimi-k2.6","input":"hello","stream":false}' \
       > "$TMP_ROOT/bridge-nonstream.json"
     node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (data.status !== 'completed' || !JSON.stringify(data.output).includes('mock bridge response')) process.exit(1)" "$TMP_ROOT/bridge-nonstream.json"
+
+    curl -fsS --max-time 10 "http://127.0.0.1:$port/v1/responses" \
+      -H "Authorization: Bearer stream-key" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"ocg-mimo-v2.5","input":"hello","stream":false}' \
+      > "$TMP_ROOT/bridge-mimo.json"
+    assert_contains "$TMP_ROOT/bridge-mimo.json" "mock bridge response for mimo-v2.5"
+
+    curl -fsS --max-time 10 "http://127.0.0.1:$port/v1/responses" \
+      -H "Authorization: Bearer stream-key" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"opencode-go/minimax-m2.5","input":"hello","stream":false}' \
+      > "$TMP_ROOT/bridge-minimax.json"
+    assert_contains "$TMP_ROOT/bridge-minimax.json" "mock bridge response for minimax-m2.5"
   )
 }
 

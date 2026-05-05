@@ -33,6 +33,16 @@ Or edit the project-local env file:
 The health endpoint works without the upstream key, but `/v1/models` and
 `/v1/responses` require `OPENCODE_GO_API_KEY`.
 
+The bridge accepts every current OpenCode Go catalog model with three naming
+styles:
+
+- Bridge alias: `ocg-qwen3.6-plus`
+- OpenCode alias: `opencode-go/qwen3.6-plus`
+- Raw upstream ID: `qwen3.6-plus`
+
+`/v1/models` returns upstream IDs plus the `ocg-*` and `opencode-go/*` aliases
+so Codex and other clients can discover the bridge-native names.
+
 The bundled bridge runtime uses the upstream v3 streaming behavior: for
 streaming Responses requests it sends `response.created` immediately, emits
 heartbeat comments while the OpenCode Go call is pending, then sends the final
@@ -92,6 +102,25 @@ deliberately avoids writing custom bridge keys into project TOML.
 
 They route through the `opencode_bridge` model provider and keep Codex as the
 orchestrator/final reviewer.
+
+## Current Model Catalog
+
+OCW Bridge supports the current OpenCode Go catalog:
+
+- `deepseek-v4-flash`
+- `deepseek-v4-pro`
+- `glm-5`
+- `glm-5.1`
+- `kimi-k2.5`
+- `kimi-k2.6`
+- `mimo-v2-omni`
+- `mimo-v2-pro`
+- `mimo-v2.5`
+- `mimo-v2.5-pro`
+- `minimax-m2.5`
+- `minimax-m2.7`
+- `qwen3.5-plus`
+- `qwen3.6-plus`
 
 ## Orchestration Pack
 

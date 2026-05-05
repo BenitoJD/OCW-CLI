@@ -18,6 +18,7 @@ All notable changes to `ocw` are documented here.
 - Add `ocw mcp audit` and expand the MCP server with structured tools for models, routes, tournaments, memory, dashboard, and MCP audit.
 - Add bundled OCW Bridge commands for Codex-native OpenCode Go subagents, including install, lifecycle, doctor, test, Codex config, agent sync, and MCP exposure.
 - Add the OCW Bridge orchestration pack and generic `oss-scout`, `oss-review`, `oss-docs`, and `oss-patch` helper scripts adapted from `opencode-bridge`.
+- Expand OCW Bridge model support to every current OpenCode Go catalog model, including MiMo, MiniMax, GLM, Kimi, Qwen, and DeepSeek aliases.
 - Harden OCW Bridge with upstream v3 streaming heartbeats, stronger agent templates, env-aware lifecycle checks, startup timeout handling, and bridge proxy regression tests.
 - Add `ocw delegate`, `ocw verdict`, `ocw savings`, and `ocw backend` for smart worker routing, final-review gates, cost-savings estimates, and backend adapter records.
 - Add threat model, MCP security, signed-release verification, and team policy documentation.

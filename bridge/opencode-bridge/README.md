@@ -182,15 +182,24 @@ The bridge handles:
 
 | Codex model ID | Upstream model | Best for |
 |---|---|---|
-| `ocg-deepseek-v4-pro` | deepseek-v4-pro | Bounded implementation, debugging, reasoning-heavy analysis |
-| `ocg-kimi-k2.6` | kimi-k2.6 | Fast repo navigation, code-structure, review, drafts |
 | `ocg-deepseek-v4-flash` | deepseek-v4-flash | Docs, summaries, mechanical low-risk tasks |
-| `ocg-kimi-k2.5` | kimi-k2.5 | (untested) |
-| `ocg-qwen3.6-plus` | qwen3.6-plus | (untested) |
-| `ocg-glm-5.1` | glm-5.1 | (untested) |
-| `ocg-minimax-m2.7` | minimax-m2.7 | (untested) |
+| `ocg-deepseek-v4-pro` | deepseek-v4-pro | Bounded implementation, debugging, reasoning-heavy analysis |
+| `ocg-glm-5` | glm-5 | Implementation and general coding |
+| `ocg-glm-5.1` | glm-5.1 | Stronger GLM coding and analysis |
+| `ocg-kimi-k2.5` | kimi-k2.5 | Fast navigation and routine coding |
+| `ocg-kimi-k2.6` | kimi-k2.6 | Fast repo navigation, code-structure, review, drafts |
+| `ocg-mimo-v2-omni` | mimo-v2-omni | Multimodal-capable MiMo family tasks |
+| `ocg-mimo-v2-pro` | mimo-v2-pro | MiMo Pro coding and analysis |
+| `ocg-mimo-v2.5` | mimo-v2.5 | Long-context MiMo coding and summaries |
+| `ocg-mimo-v2.5-pro` | mimo-v2.5-pro | Stronger MiMo V2.5 coding |
+| `ocg-minimax-m2.5` | minimax-m2.5 | Cheap routine worker calls |
+| `ocg-minimax-m2.7` | minimax-m2.7 | General coding worker calls |
+| `ocg-qwen3.5-plus` | qwen3.5-plus | Cheap routine analysis and summaries |
+| `ocg-qwen3.6-plus` | qwen3.6-plus | Strong Qwen coding and reasoning |
 
-Also accepts OpenCode-style `opencode-go/<model>` model IDs.
+The bridge also accepts OpenCode-style `opencode-go/<model>` model IDs and raw
+upstream model IDs. `/v1/models` returns upstream IDs plus the local `ocg-*`
+and `opencode-go/*` aliases.
 
 ## Model-task matrix
 
@@ -305,11 +314,12 @@ Rules, scope, output format, escalation criteria.
 | `oss-deepseek-pro.toml` | deepseek-v4-pro | high | workspace-write | Working |
 | `oss-kimi-rapid.toml` | kimi-k2.6 | high | workspace-write | Working |
 | `oss-flash-support.toml` | deepseek-v4-flash | medium | read-only | Working |
-| `oss-qwen3.6-plus` (custom) | qwen3.6-plus | high | workspace-write | Untested |
-| `oss-glm-5.1` (custom) | glm-5.1 | high | workspace-write | Untested |
-| `oss-minimax-m2.7` (custom) | minimax-m2.7 | high | workspace-write | Untested |
-
-Untested models may need adjustments — some providers are stricter about tool schemas (shape failures) or message format requirements (relational failures). The bridge strips unsupported tool types and maps `developer` → `system`, but provider-specific quirks may still surface. If you test an untested model, open an issue with your findings.
+All current OpenCode Go catalog models are accepted by the bridge. Some
+providers are stricter about tool schemas (shape failures) or message format
+requirements (relational failures). The bridge strips unsupported tool types
+and maps `developer` to `system`, but provider-specific quirks may still
+surface. If a model-specific issue appears, open an issue with the failing
+model ID and the bridge log.
 
 ## External OSS workers (fallback)
 
