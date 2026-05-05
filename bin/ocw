@@ -2443,7 +2443,7 @@ delegate_infer_mode() {
     *patch*|*fix*|*implement*|*wire*|*edit*|*change*|*refactor*)
       printf 'patch\timplementation task should run in an isolated patch worker\n'
       ;;
-    *review*|*regression*|*risk*|*security*|*bugfix*|*bug\ fix*|*bug\ report*|*pr\ review*|*pull\ request*)
+    *review*|*regression*|*risk*|*security*|*bug\ report*|*pull\ request*)
       printf 'review\treview/risk language benefits from a stronger second-opinion worker\n'
       ;;
     *scan*|*whole\ repo*|*entire\ repo*|*monorepo*|*all\ files*)
@@ -2491,7 +2491,7 @@ delegate_command() {
   shift
   local mode="" mode_set=0 json=0 final_review=1 use_worktree=0 worktree_set=0
   local model="" agent="" variant="" attach_url="" auto_approve=0 require_clean=0 remove_worktree=0
-  local task route reason stdout_file stderr_file status output_dir first_arg
+  local task reason stdout_file stderr_file status output_dir first_arg
   local -a files=() ocw_args=()
 
   while [[ $# -gt 0 ]]; do
@@ -2851,7 +2851,8 @@ backend_command_available() {
 }
 
 backend_custom_rows() {
-  local file="${1:-$(backend_registry_path)}"
+  local file
+  file="$(backend_registry_path)"
   [[ -f "$file" ]] || return 0
   awk -F '\t' 'BEGIN { OFS = "\t" } NR > 1 { print $2, $3, $4, $5, $6 }' "$file"
 }
