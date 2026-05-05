@@ -6845,7 +6845,7 @@ bridge_load_credentials() {
   fi
 
   if [[ -z "${OPENCODE_GO_API_KEY:-}" ]]; then
-    record="$(bridge_global_key_record 2>/dev/null || true)"
+    record="$(bridge_global_key_record "${OCW_BRIDGE_KEY_STORE:-auto}" 2>/dev/null || true)"
     if [[ -n "$record" ]]; then
       store="${record%%$'\t'*}"
       value="${record#*$'\t'}"
@@ -7692,7 +7692,7 @@ EOF
         severity="ok"
         message="bridge key is configured"
       fi
-      global_record="$(bridge_global_key_record 2>/dev/null || true)"
+      global_record="$(bridge_global_key_record "$store" 2>/dev/null || true)"
       if [[ -n "$global_record" ]]; then
         global_available=true
         global_store="${global_record%%$'\t'*}"
