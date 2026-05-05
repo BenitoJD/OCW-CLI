@@ -6,7 +6,8 @@ OCW delegates work to external model providers through OpenCode. Treat every wor
 
 - Source code in the current repository
 - Secrets in environment variables, config files, shell history, and local credential stores
-- OpenCode API keys stored through `ocw keys` or passed through `OCW_API_KEYS`
+- OpenCode API keys stored through `ocw keys`, `ocw bridge key`, local
+  credential stores, or passed through environment variables
 - GitHub PR metadata and diffs fetched with `gh`
 - OCW artifacts under `.codex/opencode-workers/`
 - MCP tool access exposed by `ocw mcp`
@@ -28,6 +29,8 @@ OCW delegates work to external model providers through OpenCode. Treat every wor
 - Run `ocw apply latest --check` before applying a patch
 - Keep `.codex/opencode-workers/` and `.codex/opencode-worktrees/` out of git
 - Keep `.codex/ocw-keys.tsv` out of git, prefer `ocw keys set --stdin`, and run `ocw keys doctor`
+- Prefer `ocw bridge key set --stdin` for the OpenCode Go bridge key; use
+  `.codex/ocw-bridge/opencode-go.env` only for intentional project overrides
 - Use `ocw support bundle` instead of manually sharing artifacts; it redacts config and excludes summaries by default
 - Verify releases with SHA-256 and GitHub artifact attestations
 - Use `ocw mcp audit --write-baseline` for MCP server baseline checks in sensitive environments

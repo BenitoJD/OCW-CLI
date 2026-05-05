@@ -72,10 +72,11 @@ ocw bridge start
 ocw bridge test --live
 ```
 
-Set `OPENCODE_GO_API_KEY` in the shell or in `.codex/ocw-bridge/opencode-go.env`
-before live model calls. The generated `.codex/agents/*.toml` files use the
-`opencode_bridge` provider and keep the primary agent responsible for final
-review.
+Save the OpenCode Go key once with `ocw bridge key set --stdin` before live
+model calls. OCW Bridge reuses that global key in every project. A repo can
+still override it with `.codex/ocw-bridge/opencode-go.env` when needed. The
+generated `.codex/agents/*.toml` files use the `opencode_bridge` provider and
+keep the primary agent responsible for final review.
 
 `ocw bridge orchestration sync` writes the reusable routing pack to
 `.codex/ocw-bridge-orchestration/`. `ocw bridge install` also installs
@@ -632,8 +633,9 @@ ocw keys doctor
 
 Worker runs try keys in priority order and automatically retry the same
 OpenCode command with the next key after auth, quota, balance, billing, or
-rate-limit failures. Raw keys stay in `.codex/ocw-keys.tsv` or `OCW_API_KEYS`;
-artifacts record only names and fingerprints.
+rate-limit failures. Raw CLI worker keys stay in `.codex/ocw-keys.tsv` or
+`OCW_API_KEYS`; bridge keys stay in the global `ocw bridge key` store or a
+project override env file. Artifacts record only names and fingerprints.
 
 ## OpenCode Server
 

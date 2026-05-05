@@ -54,7 +54,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
-  ocw bridge setup|install|start|stop|status|doctor|test|codex-config|agents|workers|orchestration [options]
+  ocw bridge setup|install|start|stop|status|doctor|test|key|codex-config|agents|workers|orchestration [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|profiles|recommend|configure|bench [options]
   ocw route explain [MODE] [--json]
@@ -6613,6 +6613,254 @@ bridge_load_env_file() {
   done < "$env_file"
 }
 
+bridge_expand_user_path() {
+  local path="$1"
+
+  case "$path" in
+    \~)
+      printf '%s\n' "$HOME"
+      ;;
+    \~/*)
+      printf '%s/%s\n' "$HOME" "${path#\~/}"
+      ;;
+    *)
+      printf '%s\n' "$path"
+      ;;
+  esac
+}
+
+bridge_global_config_dir() {
+  bridge_expand_user_path "${OCW_GLOBAL_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ocw}"
+}
+
+bridge_global_env_file() {
+  bridge_expand_user_path "${OCW_BRIDGE_GLOBAL_ENV_FILE:-$(bridge_global_config_dir)/opencode-go.env}"
+}
+
+bridge_keychain_service() {
+  printf '%s\n' "${OCW_BRIDGE_KEYCHAIN_SERVICE:-dev.ocw.opencodgo.api-key}"
+}
+
+bridge_keychain_account() {
+  printf '%s\n' "${OCW_BRIDGE_KEYCHAIN_ACCOUNT:-default}"
+}
+
+bridge_keychain_available() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] && have_command security
+}
+
+bridge_key_store_backend() {
+  local requested="${1:-${OCW_BRIDGE_KEY_STORE:-auto}}"
+
+  case "$requested" in
+    auto)
+      if bridge_keychain_available; then
+        printf 'keychain\n'
+      else
+        printf 'file\n'
+      fi
+      ;;
+    keychain|file)
+      printf '%s\n' "$requested"
+      ;;
+    *)
+      die "invalid bridge key store: $requested (expected auto, keychain, or file)"
+      ;;
+  esac
+}
+
+bridge_env_file_get_key() {
+  local env_file="$1"
+  local wanted="${2:-OPENCODE_GO_API_KEY}"
+  local line key value
+
+  [[ -f "$env_file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      export\ *) line="${line#export }" ;;
+    esac
+    [[ "$line" == *=* ]] || continue
+    key="$(trim "${line%%=*}")"
+    value="$(unquote "$(trim "${line#*=}")")"
+    if [[ "$key" == "$wanted" && -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done < "$env_file"
+  return 1
+}
+
+bridge_keychain_read() {
+  bridge_keychain_available || return 1
+  security find-generic-password \
+    -a "$(bridge_keychain_account)" \
+    -s "$(bridge_keychain_service)" \
+    -w 2>/dev/null
+}
+
+bridge_keychain_write() {
+  local value="$1"
+
+  bridge_keychain_available || return 1
+  security add-generic-password \
+    -a "$(bridge_keychain_account)" \
+    -s "$(bridge_keychain_service)" \
+    -w "$value" \
+    -U >/dev/null
+}
+
+bridge_keychain_delete() {
+  bridge_keychain_available || return 1
+  security delete-generic-password \
+    -a "$(bridge_keychain_account)" \
+    -s "$(bridge_keychain_service)" >/dev/null 2>&1 || true
+}
+
+bridge_global_file_read() {
+  bridge_env_file_get_key "$(bridge_global_env_file)" OPENCODE_GO_API_KEY
+}
+
+bridge_global_file_write() {
+  local value="$1"
+  local file tmp
+
+  file="$(bridge_global_env_file)"
+  mkdir -p "$(dirname "$file")"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-bridge-key.XXXXXX")"
+  chmod 600 "$tmp"
+  printf 'OPENCODE_GO_API_KEY=%s\n' "$value" > "$tmp"
+  mv "$tmp" "$file"
+  chmod 600 "$file" 2>/dev/null || true
+}
+
+bridge_global_key_record() {
+  local requested="${1:-${OCW_BRIDGE_KEY_STORE:-auto}}"
+  local value
+
+  case "$requested" in
+    auto)
+      value="$(bridge_keychain_read 2>/dev/null || true)"
+      if [[ -n "$value" ]]; then
+        printf 'keychain\t%s\n' "$value"
+        return 0
+      fi
+      value="$(bridge_global_file_read 2>/dev/null || true)"
+      if [[ -n "$value" ]]; then
+        printf 'file\t%s\n' "$value"
+        return 0
+      fi
+      ;;
+    keychain)
+      value="$(bridge_keychain_read 2>/dev/null || true)"
+      if [[ -n "$value" ]]; then
+        printf 'keychain\t%s\n' "$value"
+        return 0
+      fi
+      ;;
+    file)
+      value="$(bridge_global_file_read 2>/dev/null || true)"
+      if [[ -n "$value" ]]; then
+        printf 'file\t%s\n' "$value"
+        return 0
+      fi
+      ;;
+    *)
+      die "invalid bridge key store: $requested (expected auto, keychain, or file)"
+      ;;
+  esac
+  return 1
+}
+
+bridge_global_key_write() {
+  local value="$1"
+  local requested="${2:-${OCW_BRIDGE_KEY_STORE:-auto}}"
+  local backend
+
+  backend="$(bridge_key_store_backend "$requested")"
+  case "$backend" in
+    keychain)
+      if bridge_keychain_write "$value"; then
+        printf 'keychain\n'
+        return 0
+      fi
+      if [[ "$requested" == "auto" ]]; then
+        bridge_global_file_write "$value"
+        printf 'file\n'
+        return 0
+      fi
+      die "failed to write bridge key to macOS Keychain"
+      ;;
+    file)
+      bridge_global_file_write "$value"
+      printf 'file\n'
+      ;;
+  esac
+}
+
+bridge_global_key_delete() {
+  local requested="${1:-all}"
+  local file deleted=0
+
+  case "$requested" in
+    all|auto|keychain)
+      if bridge_keychain_available; then
+        bridge_keychain_delete || true
+        deleted=1
+      fi
+      ;;
+    file) ;;
+    *)
+      die "invalid bridge key remove store: $requested (expected all, auto, keychain, or file)"
+      ;;
+  esac
+
+  case "$requested" in
+    all|auto|file)
+      file="$(bridge_global_env_file)"
+      if [[ -f "$file" ]]; then
+        rm -f "$file"
+        deleted=1
+      fi
+      ;;
+    keychain) ;;
+  esac
+
+  [[ "$deleted" -eq 1 ]]
+}
+
+bridge_load_credentials() {
+  local env_file="$1"
+  local env_before="${OPENCODE_GO_API_KEY:-}"
+  local project_key=""
+  local record source="missing" store value
+
+  project_key="$(bridge_env_file_get_key "$env_file" OPENCODE_GO_API_KEY 2>/dev/null || true)"
+  bridge_load_env_file "$env_file"
+  if [[ -n "$project_key" ]]; then
+    source="project-env"
+  elif [[ -n "$env_before" || -n "${OPENCODE_GO_API_KEY:-}" ]]; then
+    source="environment"
+  fi
+
+  if [[ -z "${OPENCODE_GO_API_KEY:-}" ]]; then
+    record="$(bridge_global_key_record 2>/dev/null || true)"
+    if [[ -n "$record" ]]; then
+      store="${record%%$'\t'*}"
+      value="${record#*$'\t'}"
+      export OPENCODE_GO_API_KEY="$value"
+      case "$store" in
+        keychain) source="keychain" ;;
+        file) source="global-file" ;;
+        *) source="$store" ;;
+      esac
+    fi
+  fi
+
+  export OCW_BRIDGE_UPSTREAM_KEY_SOURCE="$source"
+}
+
 bridge_health_status() {
   local host="$1"
   local port="$2"
@@ -7044,7 +7292,7 @@ bridge_status_command() {
   done
 
   bridge_validate_port "$port"
-  bridge_load_env_file "$env_file"
+  bridge_load_credentials "$env_file"
   if [[ "$key_arg" -ne 1 ]]; then
     key="$(bridge_default_key)"
   fi
@@ -7126,7 +7374,7 @@ bridge_start_command() {
   fi
 
   mkdir -p "$state_dir"
-  bridge_load_env_file "$env_file"
+  bridge_load_credentials "$env_file"
   if [[ "$key_arg" -ne 1 ]]; then
     key="$(bridge_default_key)"
   fi
@@ -7207,7 +7455,7 @@ bridge_doctor_command() {
   local json=0
   local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
-  local key key_arg=0 runtime_dir state_dir env_file overall="ok" python_ok=false runtime_ok=false self_test_ok=false env_ok=false health_ok=false
+  local key key_arg=0 runtime_dir state_dir env_file overall="ok" python_ok=false runtime_ok=false self_test_ok=false env_ok=false health_ok=false upstream_key_ok=false upstream_key_source="missing"
 
   key="$(bridge_default_key)"
   runtime_dir="$(bridge_runtime_dir)"
@@ -7229,10 +7477,12 @@ bridge_doctor_command() {
   done
 
   bridge_validate_port "$port"
-  bridge_load_env_file "$env_file"
+  bridge_load_credentials "$env_file"
   if [[ "$key_arg" -ne 1 ]]; then
     key="$(bridge_default_key)"
   fi
+  upstream_key_source="${OCW_BRIDGE_UPSTREAM_KEY_SOURCE:-missing}"
+  [[ -n "${OPENCODE_GO_API_KEY:-}" ]] && upstream_key_ok=true
   have_command "$PYTHON_BIN" && python_ok=true
   [[ -f "$runtime_dir/bridge.py" ]] && runtime_ok=true
   [[ -f "$env_file" ]] && env_ok=true
@@ -7244,7 +7494,7 @@ bridge_doctor_command() {
   fi
   if [[ "$python_ok" != true || "$runtime_ok" != true || "$self_test_ok" != true ]]; then
     overall="fail"
-  elif [[ "$env_ok" != true || "$health_ok" != true ]]; then
+  elif [[ "$env_ok" != true || "$health_ok" != true || "$upstream_key_ok" != true ]]; then
     overall="warn"
   fi
 
@@ -7253,11 +7503,13 @@ bridge_doctor_command() {
     printf '  "schema_version": "ocw.bridge.doctor.v1",\n'
     printf '  "overall": '
     json_string "$overall"
-    printf ',\n  "python": %s,\n  "runtime": %s,\n  "self_test": %s,\n  "env_file": %s,\n  "health": %s,\n' "$python_ok" "$runtime_ok" "$self_test_ok" "$env_ok" "$health_ok"
+    printf ',\n  "python": %s,\n  "runtime": %s,\n  "self_test": %s,\n  "env_file": %s,\n  "upstream_key": %s,\n  "health": %s,\n' "$python_ok" "$runtime_ok" "$self_test_ok" "$env_ok" "$upstream_key_ok" "$health_ok"
     printf '  "runtime_path": '
     json_string "$runtime_dir/bridge.py"
     printf ',\n  "env_path": '
     json_string "$env_file"
+    printf ',\n  "upstream_key_source": '
+    json_string "$upstream_key_source"
     printf '\n}\n'
   else
     printf 'OCW bridge doctor: %s\n' "$overall"
@@ -7269,6 +7521,8 @@ bridge_doctor_command() {
     else
       printf 'env file: missing\n'
     fi
+    printf 'upstream key: %s\n' "$upstream_key_ok"
+    printf 'upstream key source: %s\n' "$upstream_key_source"
     printf 'health: %s\n' "$health_ok"
   fi
   [[ "$overall" != "fail" ]]
@@ -7279,7 +7533,7 @@ bridge_test_command() {
   local json=0
   local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
   local port="${OCW_BRIDGE_PORT:-4000}"
-  local key key_arg=0 runtime_dir state_dir env_file self_test_ok=false health_ok=false live_ok=false overall="ok"
+  local key key_arg=0 runtime_dir state_dir env_file self_test_ok=false health_ok=false live_ok=false upstream_key_ok=false upstream_key_source="missing" overall="ok"
 
   key="$(bridge_default_key)"
   runtime_dir="$(bridge_runtime_dir)"
@@ -7302,10 +7556,12 @@ bridge_test_command() {
   done
 
   bridge_validate_port "$port"
-  bridge_load_env_file "$env_file"
+  bridge_load_credentials "$env_file"
   if [[ "$key_arg" -ne 1 ]]; then
     key="$(bridge_default_key)"
   fi
+  upstream_key_source="${OCW_BRIDGE_UPSTREAM_KEY_SOURCE:-missing}"
+  [[ -n "${OPENCODE_GO_API_KEY:-}" ]] && upstream_key_ok=true
   require_command "$PYTHON_BIN"
   [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
   if "$PYTHON_BIN" "$runtime_dir/bridge.py" --self-test >/dev/null; then
@@ -7333,15 +7589,208 @@ bridge_test_command() {
     printf '  "schema_version": "ocw.bridge.test.v1",\n'
     printf '  "overall": '
     json_string "$overall"
-    printf ',\n  "self_test": %s,\n  "health": %s,\n  "live": %s\n' "$self_test_ok" "$health_ok" "$live_ok"
+    printf ',\n  "self_test": %s,\n  "health": %s,\n  "upstream_key": %s,\n  "live": %s,\n' "$self_test_ok" "$health_ok" "$upstream_key_ok" "$live_ok"
+    printf '  "upstream_key_source": '
+    json_string "$upstream_key_source"
+    printf '\n'
     printf '}\n'
   else
     printf 'OCW bridge test: %s\n' "$overall"
     printf 'self-test: %s\n' "$self_test_ok"
     printf 'health: %s\n' "$health_ok"
+    printf 'upstream key: %s\n' "$upstream_key_ok"
+    printf 'upstream key source: %s\n' "$upstream_key_source"
     [[ "$live" -eq 1 ]] && printf 'live models: %s\n' "$live_ok"
   fi
   [[ "$overall" != "fail" ]]
+}
+
+bridge_key_command() {
+  local subcommand="${1:-status}"
+  shift || true
+  local key_value="" source_env="" store="${OCW_BRIDGE_KEY_STORE:-auto}" backend
+  local project_env global_record global_store global_key configured=false source="missing" fingerprint="" json=0
+  local global_available=false global_fingerprint="" mode="missing" message="bridge key not configured" severity="warn"
+
+  project_env="$(bridge_project_dir)/opencode-go.env"
+
+  case "$subcommand" in
+    set)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --stdin)
+            key_value="$(auth_read_secret)"
+            shift
+            ;;
+          --value)
+            [[ $# -ge 2 ]] || die "--value requires a value"
+            key_value="$2"
+            shift 2
+            ;;
+          --from-env)
+            [[ $# -ge 2 ]] || die "--from-env requires a variable name"
+            source_env="$2"
+            validate_env_name "$source_env"
+            key_value="${!source_env:-}"
+            [[ -n "$key_value" ]] || die "environment variable is empty or unset: $source_env"
+            shift 2
+            ;;
+          --from-project)
+            key_value="$(bridge_env_file_get_key "$project_env" OPENCODE_GO_API_KEY 2>/dev/null || true)"
+            [[ -n "$key_value" ]] || die "project bridge key not found in $project_env"
+            shift
+            ;;
+          --store)
+            [[ $# -ge 2 ]] || die "--store requires a value"
+            store="$2"
+            shift 2
+            ;;
+          -h|--help)
+            cat <<'EOF'
+Usage: ocw bridge key set (--stdin|--value KEY|--from-env ENV|--from-project) [--store auto|keychain|file]
+
+Stores the OpenCode Go API key globally so every project can use OCW Bridge
+without asking for the key again. Use --stdin or --from-env to avoid putting
+secrets in shell history.
+EOF
+            return
+            ;;
+          *)
+            die "unknown bridge key set option: $1"
+            ;;
+        esac
+      done
+      validate_key_value "${key_value:-}"
+      backend="$(bridge_global_key_write "$key_value" "$store")"
+      fingerprint="$(auth_key_fingerprint "$key_value")"
+      printf 'OCW bridge key stored: %s\n' "$backend"
+      printf 'fingerprint: %s\n' "$fingerprint"
+      if [[ "$backend" == "file" ]]; then
+        printf 'file: %s\n' "$(bridge_global_env_file)"
+      elif [[ "$backend" == "keychain" ]]; then
+        printf 'keychain service: %s\n' "$(bridge_keychain_service)"
+      fi
+      ;;
+    status|list|doctor)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --json) json=1; shift ;;
+          -h|--help)
+            printf 'Usage: ocw bridge key status [--json]\n'
+            return
+            ;;
+          *)
+            die "unknown bridge key status option: $1"
+            ;;
+        esac
+      done
+      bridge_load_credentials "$project_env"
+      if [[ -n "${OPENCODE_GO_API_KEY:-}" ]]; then
+        configured=true
+        source="${OCW_BRIDGE_UPSTREAM_KEY_SOURCE:-unknown}"
+        fingerprint="$(auth_key_fingerprint "$OPENCODE_GO_API_KEY")"
+        severity="ok"
+        message="bridge key is configured"
+      fi
+      global_record="$(bridge_global_key_record 2>/dev/null || true)"
+      if [[ -n "$global_record" ]]; then
+        global_available=true
+        global_store="${global_record%%$'\t'*}"
+        global_key="${global_record#*$'\t'}"
+        global_fingerprint="$(auth_key_fingerprint "$global_key")"
+      else
+        global_store="$(bridge_key_store_backend "$store")"
+      fi
+      if [[ -f "$(bridge_global_env_file)" ]]; then
+        mode="$(stat -f '%Lp' "$(bridge_global_env_file)" 2>/dev/null || stat -c '%a' "$(bridge_global_env_file)" 2>/dev/null || printf unknown)"
+        if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+          severity="warn"
+          message="global bridge key file should be chmod 600"
+        fi
+      fi
+
+      if [[ "$json" -eq 1 ]]; then
+        printf '{\n'
+        printf '  "schema_version": "ocw.bridge.key.v1",\n'
+        printf '  "configured": %s,\n' "$configured"
+        printf '  "source": '
+        json_string "$source"
+        printf ',\n  "fingerprint": '
+        json_string "$fingerprint"
+        printf ',\n  "global_available": %s,\n' "$global_available"
+        printf '  "global_store": '
+        json_string "$global_store"
+        printf ',\n  "global_fingerprint": '
+        json_string "$global_fingerprint"
+        printf ',\n  "global_file": '
+        json_string "$(bridge_global_env_file)"
+        printf ',\n  "project_env": '
+        json_string "$project_env"
+        printf ',\n  "severity": '
+        json_string "$severity"
+        printf ',\n  "message": '
+        json_string "$message"
+        printf '\n}\n'
+      else
+        printf 'OCW bridge key: %s\n' "$severity"
+        printf 'configured: %s\n' "$configured"
+        printf 'source: %s\n' "$source"
+        [[ -n "$fingerprint" ]] && printf 'fingerprint: %s\n' "$fingerprint"
+        printf 'global store: %s\n' "$global_store"
+        printf 'global available: %s\n' "$global_available"
+        [[ -n "$global_fingerprint" ]] && printf 'global fingerprint: %s\n' "$global_fingerprint"
+        printf 'global file: %s\n' "$(bridge_global_env_file)"
+        printf 'project env: %s\n' "$project_env"
+        printf '[%s] %s\n' "$severity" "$message"
+      fi
+      [[ "$severity" != "fail" ]]
+      ;;
+    remove|rm|clear)
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --store)
+            [[ $# -ge 2 ]] || die "--store requires a value"
+            store="$2"
+            shift 2
+            ;;
+          -h|--help)
+            printf 'Usage: ocw bridge key remove [--store all|auto|keychain|file]\n'
+            return
+            ;;
+          *)
+            die "unknown bridge key remove option: $1"
+            ;;
+        esac
+      done
+      bridge_global_key_delete "$store" || true
+      printf 'OCW bridge key removed from: %s\n' "$store"
+      ;;
+    path)
+      printf '%s\n' "$(bridge_global_env_file)"
+      ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw bridge key set (--stdin|--value KEY|--from-env ENV|--from-project) [--store auto|keychain|file]
+  ocw bridge key status [--json]
+  ocw bridge key list [--json]
+  ocw bridge key doctor [--json]
+  ocw bridge key remove [--store all|auto|keychain|file]
+  ocw bridge key path
+
+OCW Bridge reads keys in this order:
+1. Project env file: .codex/ocw-bridge/opencode-go.env
+2. Shell environment: OPENCODE_GO_API_KEY
+3. Global store: macOS Keychain when available, otherwise a chmod-600 file
+
+Use `ocw bridge key set --stdin` once, then every project can run
+`ocw bridge setup --force --start --live` without asking for the key again.
+EOF
+      ;;
+    *)
+      die "unknown bridge key command: $subcommand"
+      ;;
+  esac
 }
 
 bridge_codex_config_command() {
@@ -7402,8 +7851,9 @@ Sets up the core Codex integration in the current project:
 - built-in worker/explorer overrides
 - orchestration routing docs
 
-Use --live after setting OPENCODE_GO_API_KEY to start the bridge and verify
-real /v1/models reachability.
+Use `ocw bridge key set --stdin` once to save the OpenCode Go key globally.
+Then --live can start the bridge and verify real /v1/models reachability in
+any project.
 EOF
         return
         ;;
@@ -7452,8 +7902,8 @@ EOF
 OCW bridge setup complete.
 
 Next steps:
-1. Put your OpenCode Go key in .codex/ocw-bridge/opencode-go.env:
-   OPENCODE_GO_API_KEY=sk-...
+1. Save your OpenCode Go key once for all projects:
+   ocw bridge key set --stdin
 2. Start the bridge:
    ocw bridge start --timeout $timeout
 3. Verify live model reachability:
@@ -7476,6 +7926,7 @@ bridge_command() {
     status) bridge_status_command "$@" ;;
     doctor) bridge_doctor_command "$@" ;;
     test) bridge_test_command "$@" ;;
+    key) bridge_key_command "$@" ;;
     codex-config) bridge_codex_config_command "$@" ;;
     agents) bridge_agents_command "$@" ;;
     workers) bridge_workers_command "$@" ;;
@@ -7483,13 +7934,14 @@ bridge_command() {
     -h|--help|help)
       cat <<'EOF'
 Usage:
-  ocw bridge setup [--force] [--start] [--live] [--host HOST] [--port PORT]
+  ocw bridge setup [--force] [--start] [--live] [--host HOST] [--port PORT] [--timeout SECONDS]
   ocw bridge install [--dir DIR] [--force] [--json]
   ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--timeout SECONDS] [--foreground]
   ocw bridge stop
   ocw bridge status [--json]
   ocw bridge doctor [--json]
   ocw bridge test [--live] [--json]
+  ocw bridge key set|status|list|doctor|remove|path [options]
   ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force]
   ocw bridge agents sync [--dir DIR] [--force]
   ocw bridge workers sync|diff|doctor [--dir DIR] [--force]
@@ -9107,7 +9559,7 @@ _ocw()
       return 0
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W "setup install start stop status doctor test codex-config agents workers orchestration" -- "$cur") )
+      COMPREPLY=( $(compgen -W "setup install start stop status doctor test key codex-config agents workers orchestration" -- "$cur") )
       return 0
       ;;
     models)
@@ -9189,7 +9641,7 @@ _ocw() {
         config) _values 'action' init path show validate ;;
         keys) _values 'action' set add list use remove doctor path ;;
         setup) _values 'target' codex claude opencode copilot all ;;
-        bridge) _values 'action' setup install start stop status doctor test codex-config agents workers orchestration ;;
+        bridge) _values 'action' setup install start stop status doctor test key codex-config agents workers orchestration ;;
         backend) _values 'action' list add remove doctor path ;;
         models) _values 'action' sync list profiles recommend configure bench ;;
         route) _values 'action' explain set doctor path ;;
@@ -9219,7 +9671,7 @@ complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from keys" -f -a "set add list use remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
-complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "setup install start stop status doctor test codex-config agents workers orchestration"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "setup install start stop status doctor test key codex-config agents workers orchestration"
 complete -c ocw -n "__fish_seen_subcommand_from backend" -f -a "list add remove doctor path"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list profiles recommend configure bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set doctor path"

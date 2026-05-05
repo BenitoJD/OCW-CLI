@@ -1173,14 +1173,32 @@ test_pr_review_command() {
 test_bridge_command() {
   local repo="$TMP_ROOT/bridge"
   local port setup_start_port config install_json doctor_json test_json status_json start_output stop_output
-  local setup_start_repo
+  local setup_start_repo bridge_global_key_file
   make_repo "$repo"
   cd "$repo"
   port=$((4300 + RANDOM % 1000))
   setup_start_port=$((5300 + RANDOM % 1000))
+  bridge_global_key_file="$TMP_ROOT/bridge-global-opencode-go.env"
 
   "$OCW" bridge --help > "$TMP_ROOT/bridge-help.txt"
   assert_contains "$TMP_ROOT/bridge-help.txt" "ocw bridge setup"
+  assert_contains "$TMP_ROOT/bridge-help.txt" "ocw bridge key"
+
+  OCW_BRIDGE_KEY_STORE=file OCW_BRIDGE_GLOBAL_ENV_FILE="$bridge_global_key_file" \
+    "$OCW" bridge key set --value global-bridge-key > "$TMP_ROOT/bridge-key-set.txt"
+  assert_file "$bridge_global_key_file"
+  assert_contains "$TMP_ROOT/bridge-key-set.txt" "OCW bridge key stored: file"
+  assert_not_contains "$TMP_ROOT/bridge-key-set.txt" "global-bridge-key"
+  OCW_BRIDGE_KEY_STORE=file OCW_BRIDGE_GLOBAL_ENV_FILE="$bridge_global_key_file" \
+    "$OCW" bridge key status --json > "$TMP_ROOT/bridge-key-status.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.configured || data.source !== 'global-file' || !data.global_available || data.fingerprint.includes('global-bridge-key')) process.exit(1)" "$TMP_ROOT/bridge-key-status.json"
+  OCW_BRIDGE_KEY_STORE=file OCW_BRIDGE_GLOBAL_ENV_FILE="$bridge_global_key_file" \
+    "$OCW" bridge doctor --json > "$TMP_ROOT/bridge-key-doctor.json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.upstream_key || data.upstream_key_source !== 'global-file') process.exit(1)" "$TMP_ROOT/bridge-key-doctor.json"
+  OCW_BRIDGE_KEY_STORE=file OCW_BRIDGE_GLOBAL_ENV_FILE="$bridge_global_key_file" \
+    "$OCW" bridge key remove > "$TMP_ROOT/bridge-key-remove.txt"
+  assert_absent "$bridge_global_key_file"
+  assert_contains "$TMP_ROOT/bridge-key-remove.txt" "OCW bridge key removed"
 
   if "$OCW" bridge status --port "bad-port" > "$TMP_ROOT/bridge-bad-port.out" 2> "$TMP_ROOT/bridge-bad-port.err"; then
     fail "expected bridge status to reject invalid port"

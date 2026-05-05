@@ -53,12 +53,16 @@ agents backed by OpenCode Go:
 Finish setup:
 
 ```bash
-printf 'OPENCODE_GO_API_KEY=sk-...\n' > .codex/ocw-bridge/opencode-go.env
+ocw bridge key set --stdin
 ocw bridge start --timeout 60
 ocw bridge test --live
 ```
 
-If your shell already has `OPENCODE_GO_API_KEY`, this can be one command:
+`ocw bridge key set --stdin` is one-time machine setup. OCW stores the
+OpenCode Go key globally, using macOS Keychain when available and a chmod-600
+user config file elsewhere. After that, every project can use the bridge without
+asking for the key again. If your shell already has `OPENCODE_GO_API_KEY`, this
+can be one command:
 
 ```bash
 ocw bridge setup --force --live
@@ -97,9 +101,9 @@ Steps:
 3. Run `ocw doctor --deep`.
 4. Run `ocw setup codex --force`.
 5. Run `ocw bridge setup --force`.
-6. Ask me for my OpenCode Go API key.
-7. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
-   `OPENCODE_GO_API_KEY=<my key>`
+6. Run `ocw bridge key status`.
+7. If no bridge key is configured, ask me for my OpenCode Go API key once and
+   save it with `ocw bridge key set --stdin`.
 8. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
 9. Start or restart the bridge with `ocw bridge start --timeout 60`.
 10. Run `ocw bridge test --live`.
@@ -111,6 +115,8 @@ Steps:
 
 Rules:
 - Do not print my API key back to me.
+- Prefer the global bridge key store. Use `.codex/ocw-bridge/opencode-go.env`
+  only when a project intentionally needs its own override.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
 - Treat OpenCode Go worker output as draft labor; Codex still does final review and tests.
 - If a command fails, find and fix the root cause instead of bypassing the check.
@@ -397,13 +403,22 @@ worker metadata, reports, MCP output, or support bundles. Use `--env NAME`,
 `OCW_API_KEY_ENV`, or `[auth].key_env` when your OpenCode config references a
 different environment variable.
 
-OCW Bridge uses a separate project-local env file,
-`.codex/ocw-bridge/opencode-go.env`, and reads `OPENCODE_GO_API_KEY` for
-Codex-native bridge model calls. Use `.codex/ocw-keys.tsv` for CLI worker key
-rotation, and `.codex/ocw-bridge/opencode-go.env` for the bridge proxy. Both
-paths are gitignored by `ocw init`, `ocw setup`, and `ocw bridge install`.
-`ocw keys set` also gitignores the key registry when it creates the default
-project-local key file.
+OCW Bridge reads `OPENCODE_GO_API_KEY` for Codex-native bridge model calls.
+Save it once per machine:
+
+```bash
+ocw bridge key set --stdin
+ocw bridge key status
+```
+
+On macOS, OCW stores that key in Keychain when available. On Linux and other
+systems, it stores `OPENCODE_GO_API_KEY` in a chmod-600 user config file. Every
+project then picks it up automatically. A project can still override it with
+`.codex/ocw-bridge/opencode-go.env` when a repo intentionally needs a different
+key. Use `.codex/ocw-keys.tsv` for CLI worker key rotation and `ocw bridge key`
+for the bridge proxy. Project-local secret paths are gitignored by `ocw init`,
+`ocw setup`, and `ocw bridge install`. `ocw keys set` also gitignores the key
+registry when it creates the default project-local key file.
 
 For ephemeral CI or team runners, skip the key file and provide a comma-separated
 priority list:
@@ -854,6 +869,8 @@ OCW_API_KEYS         Comma-separated API keys to try before stored keys
 OCW_API_KEY_ENV      Env var name passed to opencode, default OPENCODE_API_KEY
 OCW_KEYS_FILE        Override stored API key registry path
 OCW_KEY_ROTATION     Set 0/false/off to disable automatic key failover
+OCW_BRIDGE_KEY_STORE Set bridge key store: auto, keychain, or file
+OCW_BRIDGE_GLOBAL_ENV_FILE Override the global bridge key file fallback
 OCW_BACKENDS_FILE    Override backend adapter registry path
 OCW_FRONTIER_COST_PER_UNIT  Override savings estimate frontier unit cost
 OCW_WORKER_COST_PER_UNIT    Override savings estimate worker unit cost

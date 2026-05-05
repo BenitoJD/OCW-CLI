@@ -23,9 +23,9 @@ Steps:
 3. Run `ocw doctor --deep`.
 4. Run `ocw setup codex --force`.
 5. Run `ocw bridge setup --force`.
-6. Ask me for my OpenCode Go API key.
-7. Save it only to `.codex/ocw-bridge/opencode-go.env` as:
-   `OPENCODE_GO_API_KEY=<my key>`
+6. Run `ocw bridge key status`.
+7. If no bridge key is configured, ask me for my OpenCode Go API key once and
+   save it with `ocw bridge key set --stdin`.
 8. Confirm `.codex/ocw-keys.tsv`, `.codex/ocw-bridge/`, `.codex/opencode-workers/`, `.codex/opencode-worktrees/`, `.codex/ocw-bridge-results/`, and `.codex/ocw-bridge-worktrees/` are gitignored.
 9. Start or restart the bridge with `ocw bridge start --timeout 60`.
 10. Run `ocw bridge test --live`.
@@ -39,6 +39,8 @@ Steps:
 
 Rules:
 - Do not print my API key back to me.
+- Prefer the global bridge key store. Use `.codex/ocw-bridge/opencode-go.env`
+  only when this project intentionally needs an override.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
 - Treat OpenCode Go worker output as draft labor; Codex still does final review and tests.
 - If a command fails, find and fix the root cause instead of bypassing the check.
@@ -133,11 +135,15 @@ ocw bridge start
 ocw bridge test --live
 ```
 
-For live model calls, set `OPENCODE_GO_API_KEY` in your shell or in:
+For live model calls, save the OpenCode Go key once:
 
-```text
-.codex/ocw-bridge/opencode-go.env
+```bash
+ocw bridge key set --stdin
+ocw bridge key status
 ```
+
+That stores the key once for every project. A project-specific override can
+still live in `.codex/ocw-bridge/opencode-go.env`.
 
 Then start a new Codex session so the provider and agent files are loaded.
 

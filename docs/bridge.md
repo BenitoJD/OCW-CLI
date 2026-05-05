@@ -9,32 +9,28 @@ included under Apache License 2.0 attribution in `bridge/opencode-bridge/`.
 
 ## Quick Start
 
-Set your OpenCode Go API key before the live bridge test, either in your shell
-or in `.codex/ocw-bridge/opencode-go.env`.
+Save your OpenCode Go API key once on the machine, then set up the bridge in
+any project:
 
 ```bash
+ocw bridge key set --stdin
 ocw bridge setup --force
 ocw bridge start
 ocw bridge test --live
 ```
 
-If `OPENCODE_GO_API_KEY` is already available, one command can also set up,
-start, and verify the bridge:
+`ocw bridge key set --stdin` uses macOS Keychain when available and a chmod-600
+user config file elsewhere. If `OPENCODE_GO_API_KEY` is already available in
+your shell, one command can also set up, start, and verify the bridge:
 
 ```bash
 ocw bridge setup --force --live
 ```
 
-Shell example:
+Project-specific override:
 
 ```bash
-export OPENCODE_GO_API_KEY=sk-...
-```
-
-Or edit the project-local env file:
-
-```text
-.codex/ocw-bridge/opencode-go.env
+printf 'OPENCODE_GO_API_KEY=sk-...\n' > .codex/ocw-bridge/opencode-go.env
 ```
 
 The health endpoint works without the upstream key, but `/v1/models` and
@@ -195,7 +191,8 @@ Defaults:
 - Reports are written to `.codex/ocw-bridge-results/`.
 - Patch drafts run in `.codex/ocw-bridge-worktrees/` and emit
   `<task>.patch.diff` for inspection.
-- The default env file is `.codex/ocw-bridge/opencode-go.env`.
+- The default project override env file is `.codex/ocw-bridge/opencode-go.env`.
+- The preferred shared bridge key is managed by `ocw bridge key set --stdin`.
 
 The scripts accept `--tasks-dir`, `--results-dir`, `--dir`, `--env-file`,
 `--opencode-bin`, `--model`, and `--auto-approve`. `oss-patch` also accepts
@@ -206,6 +203,8 @@ The scripts accept `--tasks-dir`, `--results-dir`, `--dir`, `--env-file`,
 - Bind the bridge to localhost only.
 - `ocw bridge start` refuses non-loopback hosts unless
   `OCW_BRIDGE_ALLOW_NON_LOOPBACK=1` is set.
+- Prefer `ocw bridge key set --stdin` for the OpenCode Go upstream key so users
+  are not asked again in every project.
 - Do not commit `.codex/ocw-bridge/opencode-go.env`.
 - Do not commit `.codex/ocw-bridge-results/` or
   `.codex/ocw-bridge-worktrees/` unless your team deliberately archives worker
