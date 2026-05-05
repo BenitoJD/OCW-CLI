@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/BenitoJD/OCW-CLI/badge)](https://securityscorecards.dev/viewer/?uri=github.com/BenitoJD/OCW-CLI)
 
-`ocw` is a tiny OpenCode Go worker wrapper for Codex-style orchestration.
+`ocw` is an OpenCode Go worker runtime for Codex-style orchestration.
 
-The idea is simple: keep Codex as the orchestrator and final reviewer, while using cheaper OpenCode Go models for bounded worker tasks like repo exploration, broad scans, review passes, and patch drafts.
+The idea is simple: keep Codex as the orchestrator and final reviewer, while using cheaper OpenCode Go models for bounded worker tasks, structured MCP tools, and optional Codex-native OSS subagents through OCW Bridge.
 
 ![OCW terminal demo](docs/assets/ocw-demo.svg)
 
@@ -15,7 +15,7 @@ The idea is simple: keep Codex as the orchestrator and final reviewer, while usi
 
 `ocw` is for developers who want to reduce expensive agent usage without giving up the judgment of their primary coding agent.
 
-It does not replace Codex, Claude Code, or another orchestrator. Instead, it gives those agents a small shell tool for delegating narrow tasks to OpenCode Go workers, then saves the result as summaries, metadata, status snapshots, and diffs that the primary agent can inspect.
+It does not replace Codex, Claude Code, or another orchestrator. Instead, it gives those agents a shell CLI, a stdio MCP server, and an optional Responses-compatible bridge for delegating narrow tasks to OpenCode Go workers. Results are saved as summaries, metadata, status snapshots, and diffs that the primary agent can inspect.
 
 Use it when you want:
 
@@ -24,6 +24,7 @@ Use it when you want:
 - a second review pass on a diff
 - bounded patch drafts in an isolated worktree
 - repeatable worker artifacts that are easy for another agent to read
+- Codex-native OSS subagents backed by OpenCode Go models
 
 The safety model is intentionally conservative: worker output is draft labor. Your main agent, your tests, and your code review remain the final authority.
 
@@ -82,6 +83,7 @@ Requirements:
 - `git`
 - `gh` for `ocw pr ...`
 - `node` for `ocw mcp`
+- `python3` for `ocw bridge`
 - `jq` optional, but recommended for clean `summary.md` extraction
 
 Check your setup:
@@ -93,6 +95,7 @@ ocw doctor --deep
 ocw doctor --deep --json
 ocw doctor --fix
 ocw setup all
+ocw bridge doctor
 ```
 
 Uninstall:
@@ -115,6 +118,18 @@ ocw agents sync
 ```
 
 This installs `.ocw.toml`, `.gitignore` entries, Codex and Claude Code project instructions, reusable personal skills, optional project-local skills, and optional OpenCode agents. `ocw agents sync|diff|doctor` is the easiest project-local integration flow when you want repeatable setup across many repos.
+
+Enable Codex-native OSS subagents through OCW Bridge:
+
+```bash
+ocw bridge install
+ocw bridge agents sync
+ocw bridge codex-config --write --project
+ocw bridge start
+ocw bridge test
+```
+
+The bridge runs a localhost Responses-compatible proxy so Codex can use OpenCode Go models as native model-provider agents. It is bundled from `opencode-bridge` with Apache-2.0 attribution. See `docs/bridge.md`.
 
 Config helpers:
 
@@ -360,6 +375,13 @@ ocw_doctor
 ocw_apply_check
 ocw_apply
 ocw_stats
+ocw_models
+ocw_route
+ocw_tournament
+ocw_memory
+ocw_dashboard
+ocw_bridge
+ocw_mcp_audit
 ```
 
 It also exposes latest-run resources and prompt templates:
@@ -621,7 +643,7 @@ Run deterministic tests with a mocked `opencode` binary:
 ./test/run.sh
 ```
 
-The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
+The tests cover model routing, overrides, project config, config validation, attach wiring, summary extraction, diff capture, exit-code propagation, output directory collision handling, typo suggestions, `--require-clean`, isolated `--worktree` patch mode, safe patch apply, artifact inspection, manifest/audit/report/trace output, support bundle redaction, release installer dry-runs, Homebrew formula generation and doctor checks, shell completions, client config snippets, cleanup, uninstall, stats/serve passthrough, PR review artifacts, MCP tools/resources/prompts and doctor output, OCW Bridge install/config/agent/proxy lifecycle, plugin assets, skill installation across Codex/Claude/OpenCode/Agents, agent sync, policy checks, security evals, GitHub CLI extension setup, Scorecard workflow generation, benchmarks, batch execution, and eval execution.
 
 Run the full local quality gate:
 

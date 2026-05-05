@@ -1,0 +1,8 @@
+OpenCode Bridge
+
+This bundled bridge runtime is derived from:
+https://github.com/goldtetsola/opencode-bridge
+
+The upstream project is licensed under Apache License 2.0. OCW includes it as
+an optional local runtime for exposing OpenCode Go models through a
+Responses-compatible localhost proxy.

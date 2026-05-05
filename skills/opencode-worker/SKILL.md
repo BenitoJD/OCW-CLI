@@ -147,6 +147,21 @@ ocw mcp-config claude
 ocw mcp-config opencode
 ```
 
+## OCW Bridge
+
+When the user wants Codex-native OpenCode Go subagents, use OCW Bridge:
+
+```bash
+ocw bridge install
+ocw bridge agents sync
+ocw bridge codex-config --write --project
+ocw bridge start
+ocw bridge test
+```
+
+Bridge mode complements worker artifacts. Keep Codex responsible for orchestration,
+final review, and tests even when OSS models are available as native subagents.
+
 ## Safety Rules
 
 - Use `ocw --worktree patch` for important repositories.

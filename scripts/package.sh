@@ -10,7 +10,7 @@ PKG_DIR="$DIST/$PKG"
 rm -rf "$DIST"
 mkdir -p "$PKG_DIR"
 
-mkdir -p "$PKG_DIR/bin" "$PKG_DIR/docs" "$PKG_DIR/examples/codex" "$PKG_DIR/examples/claude" "$PKG_DIR/mcp" "$PKG_DIR/skills/opencode-worker" "$PKG_DIR/plugins/claude/ocw/.claude-plugin" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker" "$PKG_DIR/test/fixtures" "$PKG_DIR/test/security" "$PKG_DIR/scripts"
+mkdir -p "$PKG_DIR/bin" "$PKG_DIR/bridge" "$PKG_DIR/docs" "$PKG_DIR/examples/codex" "$PKG_DIR/examples/claude" "$PKG_DIR/mcp" "$PKG_DIR/skills/opencode-worker" "$PKG_DIR/plugins/claude/ocw/.claude-plugin" "$PKG_DIR/plugins/claude/ocw/skills/opencode-worker" "$PKG_DIR/test/fixtures" "$PKG_DIR/test/security" "$PKG_DIR/scripts"
 
 cp "$ROOT/bin/ocw" "$PKG_DIR/bin/ocw"
 cp "$ROOT/install.sh" "$PKG_DIR/install.sh"
@@ -22,6 +22,7 @@ cp "$ROOT/CODE_OF_CONDUCT.md" "$PKG_DIR/CODE_OF_CONDUCT.md"
 cp "$ROOT/CONTRIBUTING.md" "$PKG_DIR/CONTRIBUTING.md"
 cp "$ROOT/SECURITY.md" "$PKG_DIR/SECURITY.md"
 cp "$ROOT/Makefile" "$PKG_DIR/Makefile"
+cp -R "$ROOT/bridge/opencode-bridge" "$PKG_DIR/bridge/opencode-bridge"
 cp "$ROOT/docs/"*.md "$PKG_DIR/docs/"
 cp -R "$ROOT/docs/assets" "$PKG_DIR/docs/assets"
 cp -R "$ROOT/docs/site" "$PKG_DIR/docs/site"
@@ -44,7 +45,7 @@ cp "$ROOT/scripts/gauntlet.sh" "$PKG_DIR/scripts/gauntlet.sh"
 cp "$ROOT/scripts/install-release.sh" "$PKG_DIR/scripts/install-release.sh"
 cp "$ROOT/scripts/homebrew-formula.sh" "$PKG_DIR/scripts/homebrew-formula.sh"
 
-chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
+chmod +x "$PKG_DIR/bin/ocw" "$PKG_DIR/install.sh" "$PKG_DIR/bridge/opencode-bridge/bridge.py" "$PKG_DIR/bridge/opencode-bridge/bin/start-proxy" "$PKG_DIR/mcp/ocw-mcp.js" "$PKG_DIR/test/run.sh" "$PKG_DIR/test/mcp-smoke.js" "$PKG_DIR/test/fixtures/opencode" "$PKG_DIR/test/fixtures/gh" "$PKG_DIR/scripts/"*.sh
 
 tar -czf "$DIST/$PKG.tar.gz" -C "$DIST" "$PKG"
 

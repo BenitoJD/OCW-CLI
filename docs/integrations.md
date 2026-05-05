@@ -34,6 +34,7 @@ ocw init
 ocw hooks install all
 ocw setup all
 ocw mcp-config all
+ocw bridge doctor
 ```
 
 This installs `.ocw.toml`, `.gitignore` entries, `AGENTS.md`, `CLAUDE.md`, and personal/global skills for Codex, Claude Code, OpenCode, and Agent Skills-compatible clients. Use `ocw init --no-skills` when you only want project files.
@@ -47,6 +48,24 @@ ocw init --project-skills
 ```
 
 This writes `.opencode/skills`, `.claude/skills`, and `.agents/skills` copies for projects that want portable agent instructions committed with the repo.
+
+## OCW Bridge
+
+Use OCW Bridge when Codex should spawn OpenCode Go backed native subagents via
+a local Responses-compatible provider:
+
+```bash
+ocw bridge install
+ocw bridge agents sync
+ocw bridge codex-config --write --project
+ocw bridge start
+ocw bridge test
+```
+
+Set `OPENCODE_GO_API_KEY` in the shell or in `.codex/ocw-bridge/opencode-go.env`
+before live model calls. The generated `.codex/agents/*.toml` files use the
+`opencode_bridge` provider and keep the primary agent responsible for final
+review.
 
 Install the reusable agent skill:
 

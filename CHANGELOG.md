@@ -14,6 +14,7 @@ All notable changes to `ocw` are documented here.
 - Add `ocw dashboard` for a local HTML/JSON run dashboard.
 - Add `ocw eval generate` to create a starter eval file for a repository.
 - Add `ocw mcp audit` and expand the MCP server with structured tools for models, routes, tournaments, memory, dashboard, and MCP audit.
+- Add bundled OCW Bridge commands for Codex-native OpenCode Go subagents, including install, lifecycle, doctor, test, Codex config, agent sync, and MCP exposure.
 - Add threat model, MCP security, signed-release verification, and team policy documentation.
 - Expand CLI, hardening, packaged gauntlet, and MCP smoke tests across the new workflows.
 

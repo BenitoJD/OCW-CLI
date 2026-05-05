@@ -111,6 +111,9 @@ install_from_package() {
   assert_file "$extract_dir/ocw-$VERSION/docs/mcp-security.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/release-verification.md"
   assert_file "$extract_dir/ocw-$VERSION/docs/team-policy.md"
+  assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/bridge.py"
+  assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/LICENSE"
+  assert_file "$extract_dir/ocw-$VERSION/bridge/opencode-bridge/agents/oss-kimi-rapid.toml"
   assert_file "$extract_dir/ocw-$VERSION/docs/assets/ocw-demo.svg"
   assert_file "$extract_dir/ocw-$VERSION/docs/site/index.html"
   OCW_INSTALL_DIR="$install_dir" "$extract_dir/ocw-$VERSION/install.sh" >/dev/null
@@ -148,6 +151,7 @@ negative_matrix() {
     "$ocw" clean --help >/dev/null
     "$ocw" quickstart --help >/dev/null
     "$ocw" setup --help >/dev/null
+    "$ocw" bridge --help >/dev/null
     "$ocw" models --help >/dev/null
     "$ocw" route --help >/dev/null
     "$ocw" tournament --help >/dev/null
@@ -333,6 +337,18 @@ MODELS
     assert_file ".github/agents/ocw-reviewer.agent.md"
     assert_file ".opencode/commands/ocw-review.md"
     "$ocw" copilot doctor >/dev/null
+
+    "$ocw" bridge install --force --json > "$TMP_ROOT/bridge-install.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/bridge-install.json"
+    assert_file ".codex/ocw-bridge/bridge.py"
+    "$ocw" bridge agents sync --force >/dev/null
+    assert_file ".codex/agents/oss-kimi-rapid.toml"
+    "$ocw" bridge codex-config --write --project --force >/dev/null
+    assert_contains ".codex/config.toml" "[model_providers.opencode_bridge]"
+    "$ocw" bridge doctor --json > "$TMP_ROOT/bridge-doctor.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/bridge-doctor.json"
+    "$ocw" bridge test --json > "$TMP_ROOT/bridge-test.json"
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP_ROOT/bridge-test.json"
 
     cat > eval.ocw <<'EVALS'
 cheap|Return MOCK_OK for eval|MOCK_OK

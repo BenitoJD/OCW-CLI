@@ -1039,6 +1039,74 @@ test_pr_review_command() {
   assert_dir ".out/prrev-pr-review/workers/risk-tests-cheap"
 }
 
+test_bridge_command() {
+  local repo="$TMP_ROOT/bridge"
+  local port config install_json doctor_json test_json status_json start_output stop_output
+  make_repo "$repo"
+  cd "$repo"
+  port=$((4300 + RANDOM % 1000))
+
+  "$OCW" bridge --help >/dev/null
+
+  config="$TMP_ROOT/bridge-codex-config.toml"
+  "$OCW" bridge codex-config --port "$port" > "$config"
+  assert_contains "$config" "[model_providers.opencode_bridge]"
+  assert_contains "$config" "base_url = \"http://127.0.0.1:$port/v1\""
+  assert_contains "$config" "[model_providers.opencode_bridge.auth]"
+  assert_contains "$config" "OCW_BRIDGE_KEY"
+
+  install_json="$TMP_ROOT/bridge-install.json"
+  "$OCW" bridge install --force --json > "$install_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$install_json"
+  assert_file ".codex/ocw-bridge/bridge.py"
+  assert_file ".codex/ocw-bridge/LICENSE"
+  assert_file ".codex/ocw-bridge/opencode-go.env"
+  printf 'LITELLM_MASTER_KEY=env-key\n' > ".codex/ocw-bridge/opencode-go.env"
+  assert_contains ".gitignore" ".codex/ocw-bridge/"
+
+  "$OCW" bridge agents sync --force > "$TMP_ROOT/bridge-agents.txt"
+  assert_file ".codex/agents/oss-deepseek-pro.toml"
+  assert_file ".codex/agents/oss-kimi-rapid.toml"
+  assert_file ".codex/agents/oss-flash-support.toml"
+
+  "$OCW" bridge codex-config --write --project --force --port "$port" > "$TMP_ROOT/bridge-config-write.txt"
+  assert_file ".codex/config.toml"
+  assert_contains ".codex/config.toml" "model_provider = \"opencode_bridge\""
+
+  doctor_json="$TMP_ROOT/bridge-doctor.json"
+  "$OCW" bridge doctor --json --port "$port" > "$doctor_json"
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$doctor_json"
+  assert_contains "$doctor_json" '"schema_version": "ocw.bridge.doctor.v1"'
+  assert_contains "$doctor_json" '"self_test": true'
+
+  test_json="$TMP_ROOT/bridge-test-before-start.json"
+  "$OCW" bridge test --json --port "$port" > "$test_json"
+  assert_contains "$test_json" '"self_test": true'
+
+  if "$OCW" bridge start --host 0.0.0.0 --port "$port" > "$TMP_ROOT/bridge-non-loopback.out" 2> "$TMP_ROOT/bridge-non-loopback.err"; then
+    fail "expected bridge start to reject non-loopback host"
+  fi
+  assert_contains "$TMP_ROOT/bridge-non-loopback.err" "refusing to bind bridge to non-loopback host"
+
+  start_output="$TMP_ROOT/bridge-start.txt"
+  "$OCW" bridge start --port "$port" --key "cli-key" > "$start_output" 2> "$TMP_ROOT/bridge-start.err"
+  assert_contains "$start_output" "OCW bridge"
+  status_json="$TMP_ROOT/bridge-status.json"
+  "$OCW" bridge status --json --port "$port" --key "cli-key" > "$status_json"
+  node -e "const data = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); if (!data.running) process.exit(1)" "$status_json"
+
+  test_json="$TMP_ROOT/bridge-test-after-start.json"
+  "$OCW" bridge test --json --port "$port" --key "cli-key" > "$test_json"
+  assert_contains "$test_json" '"health": true'
+  test_json="$TMP_ROOT/bridge-test-wrong-key.json"
+  "$OCW" bridge test --json --port "$port" --key "env-key" > "$test_json"
+  assert_contains "$test_json" '"health": false'
+
+  stop_output="$TMP_ROOT/bridge-stop.txt"
+  "$OCW" bridge stop > "$stop_output"
+  assert_contains "$stop_output" "OCW bridge"
+}
+
 test_mcp_server() {
   node "$ROOT/test/mcp-smoke.js"
 }
@@ -1070,6 +1138,7 @@ run_test "hardening security and ux" test_hardening_security_and_ux
 run_test "config support and release installer" test_config_support_and_release_installer
 run_test "pr summary command" test_pr_summary_command
 run_test "pr review command" test_pr_review_command
+run_test "bridge command" test_bridge_command
 run_test "mcp server" test_mcp_server
 
 say "$PASS passed, $FAIL failed"

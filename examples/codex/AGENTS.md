@@ -17,6 +17,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - `ocw manifest latest --json` to inventory artifacts and checksums.
 - `ocw audit latest` before trusting worker output or applying patches.
 - `ocw mcp` to expose OCW as structured MCP tools.
+- `ocw bridge ...` to configure Codex-native OpenCode Go subagents when requested.
 
 ## Rules
 
@@ -29,6 +30,7 @@ Use `ocw` when a task benefits from cheaper OpenCode Go worker help.
 - Use `ocw doctor --deep` when setup or model reachability is uncertain.
 - Use `ocw pr review` for PR review help, then verify findings yourself before commenting or approving.
 - Prefer OCW MCP tools over shell strings when the MCP server is configured.
+- Use OCW Bridge subagents only for bounded work; Codex remains the orchestrator and final reviewer.
 - Read `.codex/opencode-workers/*/summary.md` first.
 - Inspect `diff.after.patch` and `status.after.txt` before accepting worker edits.
 - Do not trust worker output blindly.

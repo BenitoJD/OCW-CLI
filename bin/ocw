@@ -48,6 +48,7 @@ Usage:
   ocw doctor [--deep] [--json] [--fix]
   ocw quickstart [--json]
   ocw setup [codex|claude|opencode|copilot|all] [--force] [--project-skills]
+  ocw bridge install|start|stop|status|doctor|test|codex-config|agents [options]
   ocw models [opencode-models-options...]
   ocw models sync|list|bench [options]
   ocw route explain [MODE] [--json]
@@ -140,7 +141,7 @@ EOF
 }
 
 known_commands() {
-  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+  printf '%s\n' "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 }
 
 suggest_command_name() {
@@ -212,7 +213,7 @@ help_command() {
     version)
       printf 'Usage: ocw version\n'
       ;;
-    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|quickstart|setup|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|explain|mcp-config|completions|mcp)
+    init|uninstall|config|last|show|manifest|audit|apply|clean|stats|serve|doctor|quickstart|setup|bridge|models|route|tournament|hooks|memory|dashboard|copilot|agent-pack|agents|bench|batch|eval|pr|report|policy|gh-extension|homebrew|security|support|trace|explain|mcp-config|completions|mcp)
       "$OCW_SELF" "$topic" --help
       ;;
     *)
@@ -4493,6 +4494,8 @@ quickstart_command() {
     printf '  "commands": [\n'
     printf '    "ocw doctor --deep",\n'
     printf '    "ocw setup all",\n'
+    printf '    "ocw bridge doctor",\n'
+    printf '    "ocw bridge agents sync",\n'
     printf '    "ocw models sync",\n'
     printf '    "ocw cheap \\"Summarize this repository\\"",\n'
     printf '    "ocw explain latest"\n'
@@ -4521,6 +4524,8 @@ OCW quickstart
 
 Useful next commands:
    ocw route explain
+   ocw bridge doctor
+   ocw bridge codex-config
    ocw mcp audit
    ocw policy init strict
 EOF
@@ -4656,6 +4661,578 @@ EOF
   else
     printf 'OCW setup complete: %s\n' "$target"
   fi
+}
+
+bridge_vendor_dir() {
+  printf '%s\n' "$OCW_HOME/bridge/opencode-bridge"
+}
+
+bridge_project_dir() {
+  printf '%s\n' "${OCW_BRIDGE_DIR:-.codex/ocw-bridge}"
+}
+
+bridge_runtime_dir() {
+  local configured="${OCW_BRIDGE_RUNTIME_DIR:-}"
+  local project_dir
+
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return
+  fi
+
+  project_dir="$(bridge_project_dir)"
+  if [[ -f "$project_dir/bridge.py" ]]; then
+    printf '%s\n' "$project_dir"
+  else
+    bridge_vendor_dir
+  fi
+}
+
+bridge_default_key() {
+  printf '%s\n' "${OCW_BRIDGE_KEY:-${PROXY_API_KEY:-${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}"
+}
+
+bridge_loopback_host_ok() {
+  local host="$1"
+  case "$host" in
+    127.*|localhost|::1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+bridge_health_check() {
+  local host="$1"
+  local port="$2"
+  local key="$3"
+
+  have_command "$CURL_BIN" || return 2
+  "$CURL_BIN" -fsS --max-time 2 "http://$host:$port/health" \
+    -H "Authorization: Bearer $key" >/dev/null 2>&1
+}
+
+bridge_pid_running() {
+  local pid_file="$1"
+  local pid
+
+  [[ -f "$pid_file" ]] || return 1
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+bridge_print_codex_config() {
+  local port="$1"
+
+  cat <<EOF
+[model_providers.opencode_bridge]
+name = "OpenCode Bridge"
+base_url = "http://127.0.0.1:$port/v1"
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 900000
+
+[model_providers.opencode_bridge.auth]
+command = "sh"
+args = ["-c", "printf %s \"\${OCW_BRIDGE_KEY:-\${PROXY_API_KEY:-\${LITELLM_MASTER_KEY:-sk-local-codex-bridge}}}\""]
+timeout_ms = 1000
+
+[profiles.oss_native]
+model_provider = "opencode_bridge"
+web_search = "disabled"
+
+[profiles.oss_native.features]
+apps = false
+EOF
+}
+
+bridge_write_codex_config() {
+  local target="$1"
+  local force="$2"
+  local port="$3"
+  local tmp snippet
+
+  mkdir -p "$(dirname "$target")"
+  snippet="$(bridge_print_codex_config "$port")"
+
+  if [[ -f "$target" ]] && grep -Fq "[model_providers.opencode_bridge]" "$target"; then
+    if [[ "$force" -ne 1 ]]; then
+      printf 'Kept existing Codex bridge config: %s\n' "$target"
+      return
+    fi
+    tmp="$(mktemp "${TMPDIR:-/tmp}/ocw-bridge-config.XXXXXX")"
+    awk '
+      /^\[[^]]+\]$/ {
+        skip = ($0 == "[model_providers.opencode_bridge]" ||
+          $0 == "[model_providers.opencode_bridge.auth]" ||
+          $0 == "[profiles.oss_native]" ||
+          $0 == "[profiles.oss_native.features]")
+        if (!skip) print
+        next
+      }
+      !skip { print }
+    ' "$target" > "$tmp"
+    mv "$tmp" "$target"
+  fi
+
+  if [[ -s "$target" ]]; then
+    printf '\n' >> "$target"
+  fi
+  printf '%s\n' "$snippet" >> "$target"
+  printf 'Installed Codex bridge config: %s\n' "$target"
+}
+
+bridge_install_command() {
+  local target_dir
+  local source_dir
+  local force=0
+  local json=0
+  local log_file=""
+
+  target_dir="$(bridge_project_dir)"
+  source_dir="$(bridge_vendor_dir)"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) target_dir="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge install [--dir DIR] [--force] [--json]\n'
+        return
+        ;;
+      *) die "unknown bridge install option: $1" ;;
+    esac
+  done
+
+  if [[ "$json" -eq 1 ]]; then
+    log_file="$(mktemp "${TMPDIR:-/tmp}/ocw-bridge-install.XXXXXX")"
+    exec 3>&1
+    exec > "$log_file"
+  fi
+
+  [[ -f "$source_dir/bridge.py" ]] || die "bridge runtime not found: $source_dir"
+  if [[ -f "$target_dir/bridge.py" && "$force" -ne 1 ]]; then
+    printf 'Kept existing bridge runtime: %s\n' "$target_dir"
+  else
+    mkdir -p "$target_dir"
+    cp -R "$source_dir/." "$target_dir/"
+    chmod +x "$target_dir/bridge.py" "$target_dir/bin/start-proxy" 2>/dev/null || true
+    printf 'Installed bridge runtime: %s\n' "$target_dir"
+  fi
+
+  if [[ ! -f "$target_dir/opencode-go.env" ]]; then
+    cp "$source_dir/opencode-go.env.example" "$target_dir/opencode-go.env"
+    printf 'Installed bridge env template: %s\n' "$target_dir/opencode-go.env"
+  fi
+
+  ensure_gitignore_entry ".gitignore" "$target_dir/"
+  printf 'Updated gitignore: .gitignore\n'
+
+  if [[ "$json" -eq 1 ]]; then
+    exec 1>&3
+    exec 3>&-
+    printf '{\n'
+    printf '  "schema_version": "ocw.bridge.install.v1",\n'
+    printf '  "dir": '
+    json_string "$target_dir"
+    printf ',\n  "runtime": '
+    json_string "$target_dir/bridge.py"
+    printf ',\n  "log": '
+    json_string "$(cat "$log_file")"
+    printf '\n}\n'
+    rm -f "$log_file"
+  fi
+}
+
+bridge_agents_command() {
+  local subcommand="${1:-sync}"
+  local target_dir=".codex/agents"
+  local source_dir
+  local force=0
+  local file
+
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) target_dir="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge agents sync [--dir DIR] [--force]\n'
+        return
+        ;;
+      *) die "unknown bridge agents option: $1" ;;
+    esac
+  done
+
+  case "$subcommand" in
+    sync) ;;
+    -h|--help|help)
+      printf 'Usage: ocw bridge agents sync [--dir DIR] [--force]\n'
+      return
+      ;;
+    *) die "unknown bridge agents command: $subcommand" ;;
+  esac
+
+  source_dir="$(bridge_runtime_dir)"
+  [[ -d "$source_dir/agents" ]] || die "bridge agents not found: $source_dir/agents"
+  mkdir -p "$target_dir"
+  for file in "$source_dir"/agents/*.toml; do
+    [[ -f "$file" ]] || die "no bridge agent templates found: $source_dir/agents"
+    copy_if_needed "$file" "$target_dir/$(basename "$file")" "Codex bridge agent" "$force"
+  done
+  printf 'OCW bridge agents synced: %s\n' "$target_dir"
+}
+
+bridge_status_command() {
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local key
+  local json=0
+  local state_dir pid_file log_file runtime_dir running=false pid=""
+
+  key="$(bridge_default_key)"
+  state_dir="$(bridge_project_dir)"
+  pid_file="$state_dir/bridge.pid"
+  log_file="$state_dir/bridge.log"
+  runtime_dir="$(bridge_runtime_dir)"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge status [--host HOST] [--port PORT] [--key KEY] [--json]\n'
+        return
+        ;;
+      *) die "unknown bridge status option: $1" ;;
+    esac
+  done
+
+  if bridge_health_check "$host" "$port" "$key"; then
+    running=true
+  elif bridge_pid_running "$pid_file"; then
+    running=true
+  fi
+  [[ -f "$pid_file" ]] && pid="$(cat "$pid_file" 2>/dev/null || true)"
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.bridge.status.v1",\n'
+    printf '  "running": %s,\n' "$running"
+    printf '  "url": '
+    json_string "http://$host:$port/v1"
+    printf ',\n  "pid": '
+    json_string "$pid"
+    printf ',\n  "runtime": '
+    json_string "$runtime_dir/bridge.py"
+    printf ',\n  "log": '
+    json_string "$log_file"
+    printf '\n}\n'
+    return
+  fi
+
+  printf 'OCW bridge: %s\n' "$([[ "$running" == true ]] && printf 'running' || printf 'stopped')"
+  printf 'url: http://%s:%s/v1\n' "$host" "$port"
+  [[ -n "$pid" ]] && printf 'pid: %s\n' "$pid"
+  printf 'runtime: %s\n' "$runtime_dir/bridge.py"
+  printf 'log: %s\n' "$log_file"
+}
+
+bridge_start_command() {
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local key
+  local key_arg=0
+  local foreground=0
+  local state_dir runtime_dir env_file pid_file log_file pid
+
+  key="$(bridge_default_key)"
+  state_dir="$(bridge_project_dir)"
+  runtime_dir="$(bridge_runtime_dir)"
+  env_file="$state_dir/opencode-go.env"
+  pid_file="$state_dir/bridge.pid"
+  log_file="$state_dir/bridge.log"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --key) key="$2"; key_arg=1; shift 2 ;;
+      --foreground) foreground=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--foreground]\n'
+        return
+        ;;
+      *) die "unknown bridge start option: $1" ;;
+    esac
+  done
+
+  [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
+  require_command "$PYTHON_BIN"
+  if ! bridge_loopback_host_ok "$host" && [[ "${OCW_BRIDGE_ALLOW_NON_LOOPBACK:-0}" != "1" ]]; then
+    die "refusing to bind bridge to non-loopback host '$host' (set OCW_BRIDGE_ALLOW_NON_LOOPBACK=1 to override)"
+  fi
+
+  mkdir -p "$state_dir"
+  if bridge_health_check "$host" "$port" "$key"; then
+    printf 'OCW bridge already running: http://%s:%s/v1\n' "$host" "$port"
+    return
+  fi
+
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+
+  if [[ "$key_arg" -ne 1 ]]; then
+    key="$(bridge_default_key)"
+  fi
+  export LITELLM_MASTER_KEY="$key"
+  export PROXY_API_KEY="$key"
+  export PROXY_HOST="$host"
+  export PROXY_PORT="$port"
+  export PROXY_STATE_DB="${PROXY_STATE_DB:-$state_dir/state.sqlite3}"
+  export FORCE_SINGLE_TOOL_INSTRUCTIONS="${FORCE_SINGLE_TOOL_INSTRUCTIONS:-1}"
+  export FALLBACK_MODEL_MAP_JSON="${FALLBACK_MODEL_MAP_JSON:-{\"deepseek-v4-pro\":[\"kimi-k2.6\",\"deepseek-v4-flash\"],\"kimi-k2.6\":[\"deepseek-v4-pro\"],\"deepseek-v4-flash\":[\"kimi-k2.6\"]}}"
+
+  if [[ -z "${OPENCODE_GO_API_KEY:-}" ]]; then
+    printf 'warning: OPENCODE_GO_API_KEY is not set; health works, live model calls will fail until configured\n' >&2
+  fi
+
+  if [[ "$foreground" -eq 1 ]]; then
+    exec "$PYTHON_BIN" "$runtime_dir/bridge.py" --host "$host" --port "$port"
+  fi
+
+  nohup "$PYTHON_BIN" "$runtime_dir/bridge.py" --host "$host" --port "$port" > "$log_file" 2>&1 &
+  pid=$!
+  printf '%s\n' "$pid" > "$pid_file"
+  sleep 1
+  if bridge_health_check "$host" "$port" "$key"; then
+    printf 'OCW bridge started: http://%s:%s/v1\n' "$host" "$port"
+    printf 'pid: %s\n' "$pid"
+    printf 'log: %s\n' "$log_file"
+  else
+    printf 'OCW bridge start requested, but health check did not pass yet\n' >&2
+    printf 'pid: %s\n' "$pid"
+    printf 'log: %s\n' "$log_file"
+  fi
+}
+
+bridge_stop_command() {
+  local state_dir pid_file pid
+
+  state_dir="$(bridge_project_dir)"
+  pid_file="$state_dir/bridge.pid"
+  [[ -f "$pid_file" ]] || {
+    printf 'OCW bridge is not tracked as running\n'
+    return
+  }
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    sleep 1
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
+    printf 'OCW bridge stopped: %s\n' "$pid"
+  else
+    printf 'OCW bridge pid is not running: %s\n' "$pid"
+  fi
+  rm -f "$pid_file"
+}
+
+bridge_doctor_command() {
+  local json=0
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local key runtime_dir state_dir env_file overall="ok" python_ok=false runtime_ok=false self_test_ok=false env_ok=false health_ok=false
+
+  key="$(bridge_default_key)"
+  runtime_dir="$(bridge_runtime_dir)"
+  state_dir="$(bridge_project_dir)"
+  env_file="$state_dir/opencode-go.env"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge doctor [--host HOST] [--port PORT] [--key KEY] [--json]\n'
+        return
+        ;;
+      *) die "unknown bridge doctor option: $1" ;;
+    esac
+  done
+
+  have_command "$PYTHON_BIN" && python_ok=true
+  [[ -f "$runtime_dir/bridge.py" ]] && runtime_ok=true
+  [[ -f "$env_file" ]] && env_ok=true
+  if [[ "$python_ok" == true && "$runtime_ok" == true ]] && "$PYTHON_BIN" "$runtime_dir/bridge.py" --self-test >/dev/null 2>&1; then
+    self_test_ok=true
+  fi
+  if bridge_health_check "$host" "$port" "$key"; then
+    health_ok=true
+  fi
+  if [[ "$python_ok" != true || "$runtime_ok" != true || "$self_test_ok" != true ]]; then
+    overall="fail"
+  elif [[ "$env_ok" != true || "$health_ok" != true ]]; then
+    overall="warn"
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.bridge.doctor.v1",\n'
+    printf '  "overall": '
+    json_string "$overall"
+    printf ',\n  "python": %s,\n  "runtime": %s,\n  "self_test": %s,\n  "env_file": %s,\n  "health": %s,\n' "$python_ok" "$runtime_ok" "$self_test_ok" "$env_ok" "$health_ok"
+    printf '  "runtime_path": '
+    json_string "$runtime_dir/bridge.py"
+    printf ',\n  "env_path": '
+    json_string "$env_file"
+    printf '\n}\n'
+  else
+    printf 'OCW bridge doctor: %s\n' "$overall"
+    printf 'python: %s\n' "$python_ok"
+    printf 'runtime: %s\n' "$runtime_dir/bridge.py"
+    printf 'self-test: %s\n' "$self_test_ok"
+    if [[ "$env_ok" == true ]]; then
+      printf 'env file: %s\n' "$env_file"
+    else
+      printf 'env file: missing\n'
+    fi
+    printf 'health: %s\n' "$health_ok"
+  fi
+  [[ "$overall" != "fail" ]]
+}
+
+bridge_test_command() {
+  local live=0
+  local json=0
+  local host="${OCW_BRIDGE_HOST:-127.0.0.1}"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+  local key runtime_dir self_test_ok=false health_ok=false live_ok=false overall="ok"
+
+  key="$(bridge_default_key)"
+  runtime_dir="$(bridge_runtime_dir)"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --live) live=1; shift ;;
+      --host) host="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: ocw bridge test [--live] [--host HOST] [--port PORT] [--key KEY] [--json]\n'
+        return
+        ;;
+      *) die "unknown bridge test option: $1" ;;
+    esac
+  done
+
+  require_command "$PYTHON_BIN"
+  [[ -f "$runtime_dir/bridge.py" ]] || die "bridge runtime not found: $runtime_dir/bridge.py"
+  if "$PYTHON_BIN" "$runtime_dir/bridge.py" --self-test >/dev/null; then
+    self_test_ok=true
+  fi
+  if bridge_health_check "$host" "$port" "$key"; then
+    health_ok=true
+  fi
+  if [[ "$live" -eq 1 ]]; then
+    require_command "$CURL_BIN"
+    if "$CURL_BIN" -fsS --max-time 20 "http://$host:$port/v1/models" -H "Authorization: Bearer $key" >/dev/null; then
+      live_ok=true
+    fi
+  fi
+  if [[ "$self_test_ok" != true ]]; then
+    overall="fail"
+  elif [[ "$live" -eq 1 && "$live_ok" != true ]]; then
+    overall="fail"
+  elif [[ "$health_ok" != true ]]; then
+    overall="warn"
+  fi
+
+  if [[ "$json" -eq 1 ]]; then
+    printf '{\n'
+    printf '  "schema_version": "ocw.bridge.test.v1",\n'
+    printf '  "overall": '
+    json_string "$overall"
+    printf ',\n  "self_test": %s,\n  "health": %s,\n  "live": %s\n' "$self_test_ok" "$health_ok" "$live_ok"
+    printf '}\n'
+  else
+    printf 'OCW bridge test: %s\n' "$overall"
+    printf 'self-test: %s\n' "$self_test_ok"
+    printf 'health: %s\n' "$health_ok"
+    [[ "$live" -eq 1 ]] && printf 'live models: %s\n' "$live_ok"
+  fi
+  [[ "$overall" != "fail" ]]
+}
+
+bridge_codex_config_command() {
+  local write=0
+  local force=0
+  local target=".codex/config.toml"
+  local port="${OCW_BRIDGE_PORT:-4000}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --write) write=1; shift ;;
+      --force) force=1; shift ;;
+      --project) target=".codex/config.toml"; shift ;;
+      --global) target="${CODEX_HOME:-$HOME/.codex}/config.toml"; shift ;;
+      --file) target="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --key) printf 'warning: --key is ignored by codex-config; set OCW_BRIDGE_KEY for persistent Codex auth\n' >&2; shift 2 ;;
+      -h|--help)
+        printf 'Usage: ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force] [--port PORT] [--key KEY]\n'
+        return
+        ;;
+      *) die "unknown bridge codex-config option: $1" ;;
+    esac
+  done
+
+  if [[ "$write" -eq 1 ]]; then
+    bridge_write_codex_config "$target" "$force" "$port"
+  else
+    bridge_print_codex_config "$port"
+  fi
+}
+
+bridge_command() {
+  local subcommand="${1:-status}"
+  shift || true
+
+  case "$subcommand" in
+    install) bridge_install_command "$@" ;;
+    start) bridge_start_command "$@" ;;
+    stop) bridge_stop_command "$@" ;;
+    status) bridge_status_command "$@" ;;
+    doctor) bridge_doctor_command "$@" ;;
+    test) bridge_test_command "$@" ;;
+    codex-config) bridge_codex_config_command "$@" ;;
+    agents) bridge_agents_command "$@" ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage:
+  ocw bridge install [--dir DIR] [--force] [--json]
+  ocw bridge start [--host HOST] [--port PORT] [--key KEY] [--foreground]
+  ocw bridge stop
+  ocw bridge status [--json]
+  ocw bridge doctor [--json]
+  ocw bridge test [--live] [--json]
+  ocw bridge codex-config [--write] [--project|--global|--file FILE] [--force]
+  ocw bridge agents sync [--dir DIR] [--force]
+EOF
+      ;;
+    *) die "unknown bridge command: $subcommand" ;;
+  esac
 }
 
 explain_command() {
@@ -5967,7 +6544,7 @@ mcp_audit_command() {
   local -a required_tools=(
     ocw_run ocw_last ocw_show ocw_manifest ocw_audit ocw_report ocw_eval
     ocw_doctor ocw_apply_check ocw_apply ocw_stats ocw_models ocw_route
-    ocw_tournament ocw_memory ocw_dashboard ocw_mcp_audit
+    ocw_tournament ocw_memory ocw_dashboard ocw_bridge ocw_mcp_audit
   )
 
   while [[ $# -gt 0 ]]; do
@@ -6139,7 +6716,7 @@ mcp_doctor_command() {
     json_string "$node_path"
     printf ',\n  "ok": %s,\n' "$([[ "$status" -eq 0 ]] && printf true || printf false)"
     printf '  "capabilities": ["tools", "resources", "prompts"],\n'
-    printf '  "tools": ["ocw_run", "ocw_last", "ocw_show", "ocw_manifest", "ocw_audit", "ocw_report", "ocw_eval", "ocw_doctor", "ocw_apply_check", "ocw_apply", "ocw_stats", "ocw_models", "ocw_route", "ocw_tournament", "ocw_memory", "ocw_dashboard", "ocw_mcp_audit"]\n'
+    printf '  "tools": ["ocw_run", "ocw_last", "ocw_show", "ocw_manifest", "ocw_audit", "ocw_report", "ocw_eval", "ocw_doctor", "ocw_apply_check", "ocw_apply", "ocw_stats", "ocw_models", "ocw_route", "ocw_tournament", "ocw_memory", "ocw_dashboard", "ocw_bridge", "ocw_mcp_audit"]\n'
     printf '}\n'
   else
     printf 'OCW MCP server: %s\n' "$server"
@@ -6234,7 +6811,7 @@ _ocw()
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+  commands="init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
   modes="cheap explore scan review patch"
 
   case "$prev" in
@@ -6260,6 +6837,10 @@ _ocw()
       ;;
     setup)
       COMPREPLY=( $(compgen -W "codex claude opencode copilot all" -- "$cur") )
+      return 0
+      ;;
+    bridge)
+      COMPREPLY=( $(compgen -W "install start stop status doctor test codex-config agents" -- "$cur") )
       return 0
       ;;
     models)
@@ -6319,7 +6900,7 @@ _ocw() {
   local -a commands modes
   commands=(
     init uninstall config last show manifest audit apply clean stats serve doctor models
-    quickstart setup route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension security
+    quickstart setup bridge route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension security
     homebrew support trace explain mcp-config completions mcp help version
   )
   modes=(cheap explore scan review patch)
@@ -6340,6 +6921,7 @@ _ocw() {
         pr) _values 'action' summary review ;;
         config) _values 'action' init path show validate ;;
         setup) _values 'target' codex claude opencode copilot all ;;
+        bridge) _values 'action' install start stop status doctor test codex-config agents ;;
         models) _values 'action' sync list bench ;;
         route) _values 'action' explain set path ;;
         hooks) _values 'action' install ;;
@@ -6361,12 +6943,13 @@ EOF
       ;;
     fish)
       cat <<'EOF'
-complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
+complete -c ocw -f -a "cheap explore scan review patch init uninstall config last show manifest audit apply clean stats serve doctor quickstart setup bridge models route tournament hooks memory dashboard copilot agent-pack agents bench batch eval pr report policy gh-extension homebrew security support trace explain mcp-config completions mcp help version"
 complete -c ocw -n "__fish_seen_subcommand_from mcp-config" -f -a "codex claude opencode all"
 complete -c ocw -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 complete -c ocw -n "__fish_seen_subcommand_from pr" -f -a "summary review"
 complete -c ocw -n "__fish_seen_subcommand_from config" -f -a "init path show validate"
 complete -c ocw -n "__fish_seen_subcommand_from setup" -f -a "codex claude opencode copilot all"
+complete -c ocw -n "__fish_seen_subcommand_from bridge" -f -a "install start stop status doctor test codex-config agents"
 complete -c ocw -n "__fish_seen_subcommand_from models" -f -a "sync list bench"
 complete -c ocw -n "__fish_seen_subcommand_from route" -f -a "explain set path"
 complete -c ocw -n "__fish_seen_subcommand_from hooks" -f -a "install"
@@ -6404,6 +6987,7 @@ GIT_BIN="${OCW_GIT_BIN:-git}"
 GH_BIN="${OCW_GH_BIN:-gh}"
 CURL_BIN="${OCW_CURL_BIN:-curl}"
 NODE_BIN="${OCW_NODE_BIN:-node}"
+PYTHON_BIN="${OCW_PYTHON_BIN:-python3}"
 OCW_SELF="${BASH_SOURCE[0]}"
 load_config
 
@@ -6496,6 +7080,11 @@ case "$1" in
   setup)
     shift
     setup_command "$@"
+    exit $?
+    ;;
+  bridge)
+    shift
+    bridge_command "$@"
     exit $?
     ;;
   route)

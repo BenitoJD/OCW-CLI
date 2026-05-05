@@ -114,6 +114,7 @@ function createClient(repo) {
       'ocw_apply',
       'ocw_apply_check',
       'ocw_audit',
+      'ocw_bridge',
       'ocw_dashboard',
       'ocw_doctor',
       'ocw_eval',

@@ -17,6 +17,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - `ocw manifest latest --json` to inventory artifacts and checksums.
 - `ocw audit latest` before trusting worker output or applying patches.
 - `ocw mcp` to expose OCW as structured MCP tools.
+- `ocw bridge ...` to configure Codex-native OpenCode Go subagents when using Codex.
 
 ## Workflow
 
@@ -38,6 +39,7 @@ Use `ocw` to delegate bounded work to OpenCode Go models while keeping Claude Co
 - Use `ocw doctor --deep` when setup or model reachability is uncertain.
 - Use `ocw pr review` for PR review help, then verify findings yourself before commenting or approving.
 - Prefer OCW MCP tools over shell strings when the MCP server is configured.
+- Treat OCW Bridge subagents as bounded draft workers, not final reviewers.
 - Do not blindly apply worker patches.
 - Do not commit `.codex/opencode-workers/` or `.codex/opencode-worktrees/`.
 

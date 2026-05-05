@@ -8,6 +8,7 @@ Use Codex as the orchestrator and OCW as the cheap worker layer.
 ocw doctor --deep
 ocw agents sync
 ocw mcp-config codex
+ocw bridge doctor
 ```
 
 Add the MCP server:
@@ -65,3 +66,24 @@ ocw mcp doctor --json
 ```
 
 The MCP server exposes tools, resources, and prompts. Codex remains responsible for final code review and tests.
+
+## Native OSS Subagents
+
+Use OCW Bridge when you want OpenCode Go models to appear as Codex-native model
+provider agents:
+
+```bash
+ocw bridge install
+ocw bridge agents sync
+ocw bridge codex-config --write --project
+ocw bridge start
+ocw bridge test
+```
+
+For live model calls, set `OPENCODE_GO_API_KEY` in your shell or in:
+
+```text
+.codex/ocw-bridge/opencode-go.env
+```
+
+Then start a new Codex session so the provider and agent files are loaded.

@@ -253,6 +253,28 @@ const tools = [
     annotations: { readOnlyHint: false },
   },
   {
+    name: 'ocw_bridge',
+    description: 'Manage the OCW OpenCode Bridge runtime for Codex-native OSS subagents.',
+    inputSchema: schema({
+      ...commonProperties,
+      action: {
+        type: 'string',
+        enum: ['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync'],
+      },
+      dir: { type: 'string', description: 'Target directory for install or agent sync.' },
+      host: { type: 'string', description: 'Bridge bind/check host. Defaults to 127.0.0.1.' },
+      port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Bridge port. Defaults to 4000.' },
+      key: { type: 'string', description: 'Local proxy key. Defaults to sk-local-codex-bridge.' },
+      force: { type: 'boolean', description: 'Overwrite OCW-owned bridge files/config where supported.' },
+      write: { type: 'boolean', description: 'For codex-config, write instead of print.' },
+      global: { type: 'boolean', description: 'For codex-config, target ~/.codex/config.toml.' },
+      project: { type: 'boolean', description: 'For codex-config, target .codex/config.toml.' },
+      live: { type: 'boolean', description: 'For test, call /v1/models through the live provider.' },
+      json: { type: 'boolean', description: 'Return JSON where supported. Defaults to true for status/doctor/test/install.' },
+    }, ['action']),
+    annotations: { readOnlyHint: false },
+  },
+  {
     name: 'ocw_mcp_audit',
     description: 'Audit the OCW MCP server for parseability, expected tool exposure, and optional baseline SHA.',
     inputSchema: schema({
@@ -726,6 +748,39 @@ function callTool(name, args) {
     const out = assertString(input.out, 'out');
     if (out) ocwArgs.push('--out', out);
     if (assertBoolean(input.json, 'json')) ocwArgs.push('--json');
+    result = runOcw(ocwArgs, input);
+    return toolResponse(name, result);
+  }
+
+  if (name === 'ocw_bridge') {
+    const action = assertString(input.action, 'action', true);
+    if (!['install', 'start', 'stop', 'status', 'doctor', 'test', 'codex-config', 'agents-sync'].includes(action)) {
+      throw new Error(`unsupported bridge action: ${action}`);
+    }
+    const ocwArgs = ['bridge'];
+    if (action === 'agents-sync') {
+      ocwArgs.push('agents', 'sync');
+    } else {
+      ocwArgs.push(action);
+    }
+    const dir = assertString(input.dir, 'dir');
+    if (dir && (action === 'install' || action === 'agents-sync')) ocwArgs.push('--dir', dir);
+    const host = assertString(input.host, 'host');
+    if (host && ['start', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--host', host);
+    if (input.port !== undefined && input.port !== null) {
+      if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
+        throw new Error('port must be an integer between 1 and 65535');
+      }
+      if (['start', 'status', 'doctor', 'test', 'codex-config'].includes(action)) ocwArgs.push('--port', String(input.port));
+    }
+    const key = assertString(input.key, 'key');
+    if (key && ['start', 'status', 'doctor', 'test', 'codex-config'].includes(action)) ocwArgs.push('--key', key);
+    if (assertBoolean(input.force, 'force') && ['install', 'codex-config', 'agents-sync'].includes(action)) ocwArgs.push('--force');
+    if (assertBoolean(input.write, 'write') && action === 'codex-config') ocwArgs.push('--write');
+    if (assertBoolean(input.global, 'global') && action === 'codex-config') ocwArgs.push('--global');
+    if (assertBoolean(input.project, 'project') && action === 'codex-config') ocwArgs.push('--project');
+    if (assertBoolean(input.live, 'live') && action === 'test') ocwArgs.push('--live');
+    if (input.json !== false && ['install', 'status', 'doctor', 'test'].includes(action)) ocwArgs.push('--json');
     result = runOcw(ocwArgs, input);
     return toolResponse(name, result);
   }
